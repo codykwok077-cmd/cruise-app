@@ -12,7 +12,7 @@
 <link rel="icon" href="/icon-192.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
-<link rel="stylesheet" href="/style.css?v=3">
+<link rel="stylesheet" href="/style.css?v=4">
 </head>
 <body>
 <div id="app">
@@ -34,7 +34,7 @@
       <button id="joinBtn" class="ghost">Join</button>
     </div>
     <p id="homeMsg" class="msg"></p>
-    <p class="ver">Version 3</p>
+    <p class="ver">Version 4</p>
   </section>
 
   <section id="cruise" class="screen" hidden>
@@ -72,12 +72,14 @@
         <div class="handle" id="handle"></div>
         <div class="tabs" id="tabs">
           <button data-tab="Route" class="on">Route</button>
-          <button data-tab="People">Cruisers</button>
-          <button data-tab="Share">Share</button>
+          <button data-tab="Info">Info</button>
+          <button data-tab="People">People</button>
           <button data-tab="Photos">Photos</button>
+          <button data-tab="Share">Share</button>
         </div>
         <div class="panels">
           <div id="panelRoute" class="panel"></div>
+          <div id="panelInfo" class="panel" hidden></div>
           <div id="panelPeople" class="panel" hidden></div>
           <div id="panelShare" class="panel" hidden></div>
           <div id="panelPhotos" class="panel" hidden></div>
@@ -116,7 +118,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
-<script src="/config.js?v=3"></script>
-<script src="/app.js?v=3"></script>
+<script src="/config.js?v=4"></script>
+<script src="/app.js?v=4"></script>
 </body>
 </html>

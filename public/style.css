@@ -154,3 +154,18 @@ input:focus{border-color:var(--accent)}
 .lbbtn[hidden]{display:none}
 
 .ver{text-align:center;color:var(--muted);font-size:12px;margin:0}
+
+/* info */
+.tabs button{font-size:12.5px}
+.frow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.frow.one{grid-template-columns:1fr}
+input[type=date],input[type=time]{min-width:0;-webkit-appearance:none;appearance:none;text-align:left}
+textarea{width:100%;min-height:120px;border-radius:12px;border:1px solid var(--line);background:var(--bg);padding:12px 14px;font:inherit;font-size:16px;line-height:1.45;color:var(--ink);resize:vertical;outline:none}
+textarea:focus{border-color:var(--accent)}
+.infocard{background:var(--bg);border-radius:16px;padding:14px;margin:8px 0 12px;display:flex;flex-direction:column;gap:12px}
+.infoday{font-size:15px;font-weight:600}
+.times{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tbox{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:2px}
+.tbox small{color:var(--muted);font-size:12px}
+.tbox b{font-size:22px;letter-spacing:-.02em}
+.notes{white-space:pre-wrap;line-height:1.5;font-size:15px;margin:0 0 4px}

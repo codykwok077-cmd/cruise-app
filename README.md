@@ -56,6 +56,9 @@ It then opens full screen like a normal app.
 - `public/app.js`: the app (Leaflet map, route drawing, live cars, wake lock).
 - **Place search**: the magnifier button opens a side drawer. Search for a place (cafe, beach, address),
   tap a result to see it on the map, and the organiser can add it as a stop or a route point.
+- **Info**: the organiser sets the date, meet time, end time and details (parking, rules, what to bring).
+  Everyone sees it live, and people who join a cruise with details set land on it first. Times are shown
+  as entered (local time), so they suit a cruise where everyone is in the same area.
 - **Photos**: everyone can add photos from the Photos tab ("Take photo" opens the camera, "Choose photos" opens the library). Photos taken just now are pinned on the map where
   they were taken. The person who added a photo can delete it, and so can the organiser.
 - The organiser gets a secret key when they start a cruise (stored on their device). Only that key can

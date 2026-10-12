@@ -34,14 +34,14 @@ function load() {
   if (!DATA_FILE) return;
   try {
     const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    for (const c of raw) cruises.set(c.code, { ...c, cars: new Map(), clients: new Set(), carsDirty: false, photos: [], photoBytes: 0 });
+    for (const c of raw) cruises.set(c.code, { ...c, info: c.info || emptyInfo(), cars: new Map(), clients: new Set(), carsDirty: false, photos: [], photoBytes: 0 });
     console.log('Loaded', cruises.size, 'cruises');
   } catch (e) { /* first run */ }
 }
 function save() {
   if (!DATA_FILE || !persistDirty) return;
   persistDirty = false;
-  const out = [...cruises.values()].map(({ code, name, adminKey, points, paths, updated }) => ({ code, name, adminKey, points, paths, updated }));
+  const out = [...cruises.values()].map(({ code, name, adminKey, points, paths, info, updated }) => ({ code, name, adminKey, points, paths, info, updated }));
   fs.writeFile(DATA_FILE, JSON.stringify(out), err => { if (err) console.error('save failed', err.message); });
 }
 
@@ -86,7 +86,17 @@ function cleanPaths(arr, nPoints) {
   }
   return out;
 }
-const publicState = c => ({ code: c.code, name: c.name, points: c.points, paths: c.paths });
+const emptyInfo = () => ({ date: '', meet: '', end: '', notes: '' });
+function cleanInfo(b) {
+  b = b && typeof b === 'object' ? b : {};
+  return {
+    date: /^\d{4}-\d{2}-\d{2}$/.test(b.date) ? b.date : '',
+    meet: /^([01]\d|2[0-3]):[0-5]\d$/.test(b.meet) ? b.meet : '',
+    end: /^([01]\d|2[0-3]):[0-5]\d$/.test(b.end) ? b.end : '',
+    notes: (typeof b.notes === 'string' ? b.notes : '').replace(/[\u0000-\u0009\u000b-\u001f]/g, '').slice(0, 1000)
+  };
+}
+const publicState = c => ({ code: c.code, name: c.name, points: c.points, paths: c.paths, info: c.info || emptyInfo() });
 const carsList = c => [...c.cars.values()].map(({ id, name, color, lat, lng, hd, sp, t }) => ({ id, name, color, lat, lng, hd, sp, t }));
 const photosMeta = c => c.photos.map(({ id, by, name, t, lat, lng }) => ({ id, by, name, t, lat, lng }));
 function decodeJpeg(dataUrl, max) {
@@ -114,7 +124,7 @@ async function api(req, res, url) {
     const c = {
       code, name: str(b.name, 40) || 'Sunday cruise', adminKey: crypto.randomBytes(16).toString('hex'),
       points: [], paths: [], updated: Date.now(), cars: new Map(), clients: new Set(), carsDirty: false,
-      photos: [], photoBytes: 0
+      photos: [], photoBytes: 0, info: emptyInfo()
     };
     cruises.set(code, c); persistDirty = true;
     return send(res, 201, { ...publicState(c), adminKey: c.adminKey });
@@ -132,6 +142,7 @@ async function api(req, res, url) {
     const b = await readBody(req);
     if (b.name !== undefined) c.name = str(b.name, 40) || c.name;
     if (b.points !== undefined) { c.points = cleanPoints(b.points); c.paths = cleanPaths(b.paths, c.points.length); }
+    if (b.info !== undefined) c.info = cleanInfo(b.info);
     touch(c);
     const state = publicState(c);
     for (const r of c.clients) sse(r, 'state', state);

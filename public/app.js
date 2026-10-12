@@ -78,7 +78,8 @@ const S = {
   me: { lat: null, lng: null, hd: null, sp: null, has: false },
   watchId: null, wake: null, wakeState: 'idle', wantAwake: false,
   demo: false, demoCars: [], active: false,
-  photos: []
+  photos: [],
+  info: { date: '', meet: '', end: '', notes: '' }
 };
 
 /* ---------- map ---------- */
@@ -226,7 +227,7 @@ async function flushSave() {
   try {
     const r = await fetch('/api/cruises/' + S.code, {
       method: 'PUT', headers: { 'Content-Type': 'application/json', 'x-admin-key': S.adminKey },
-      body: JSON.stringify({ name: S.cname, points: S.points, paths: S.paths })
+      body: JSON.stringify({ name: S.cname, points: S.points, paths: S.paths, info: S.info })
     });
     if (r.status === 403) toast('You’re not the organiser of this cruise');
     else if (!r.ok) toast('Couldn’t save the route');
@@ -237,12 +238,13 @@ async function flushSave() {
 
 /* ---------- panels ---------- */
 function showTab(name) {
-  ['Route', 'People', 'Share', 'Photos'].forEach(n => { $('#panel' + n).hidden = n !== name; });
+  ['Route', 'Info', 'People', 'Share', 'Photos'].forEach(n => { $('#panel' + n).hidden = n !== name; });
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
   $('#sheet').classList.remove('collapsed');
   if (name === 'People') renderPeople();
   if (name === 'Share') renderShare();
   if (name === 'Photos') renderPhotos();
+  if (name === 'Info') renderInfo();
 }
 function flyTo(lat, lng, z) { if (map) map.flyTo([lat, lng], Math.max(map.getZoom(), z || 15), { duration: .6 }); }
 
@@ -429,7 +431,10 @@ function onState(st) {
   S.cname = st.name || S.cname;
   S.points = Array.isArray(st.points) ? st.points : [];
   S.paths = Array.isArray(st.paths) ? st.paths : [];
+  S.info = Object.assign({ date: '', meet: '', end: '', notes: '' }, st.info || {});
   S.loaded = true;
+  renderInfo();
+  if (first && !S.isOrg && hasInfo(S.info)) showTab('Info');
   drawRoute(); renderRoute(); updateTools(); updateChips();
   if (S.points.length && !S.fitted) { S.fitted = true; fitAll(); }
 }
@@ -513,7 +518,7 @@ function leaveCruise() {
   S.points = []; S.paths = []; S.code = null; S.adminKey = null; S.isOrg = false; S.cars = new Map();
   S.me = { lat: null, lng: null, hd: null, sp: null, has: false }; lastFix = null;
   clearCars(); if (map) { routeCasing.setLatLngs([]); routeLine.setLatLngs([]); pointLayer.clearLayers(); photoLayer.clearLayers(); }
-  S.photos = []; { const pt = document.querySelector('#tabs [data-tab="Photos"]'); if (pt) pt.textContent = 'Photos'; } closeSearch(); clearSearchMarker(); closeLightbox(); $('#searchResults').replaceChildren(); $('#searchInput').value = '';
+  S.info = { date: '', meet: '', end: '', notes: '' }; S.photos = []; { const pt = document.querySelector('#tabs [data-tab="Photos"]'); if (pt) pt.textContent = 'Photos'; } closeSearch(); clearSearchMarker(); closeLightbox(); $('#searchResults').replaceChildren(); $('#searchInput').value = '';
   history.replaceState(null, '', '/');
   $('#cruise').hidden = true; $('#home').hidden = false; $('#locating').hidden = true;
 }
@@ -546,6 +551,42 @@ async function joinCruise(codeIn) {
     S.code = d.code; S.cname = d.name; S.adminKey = store.get('cruise_admin_' + d.code) || null;
     enterCruise();
   } catch (e) { homeMsg('Couldn’t reach the server. Check your connection and try again.'); }
+}
+
+/* ---------- cruise info (meet / end / details) ---------- */
+const hasInfo = i => !!(i && (i.date || i.meet || i.end || i.notes));
+function fmtClock(t) {
+  if (!/^\d{2}:\d{2}$/.test(t || '')) return '';
+  try { return new Date(2000, 0, 1, +t.slice(0, 2), +t.slice(3)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch (e) { return t; }
+}
+function fmtDay(d) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d || '')) return '';
+  const [y, m, dd] = d.split('-').map(Number);
+  try { return new Date(y, m - 1, dd).toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }); } catch (e) { return d; }
+}
+function setInfo(key, val) { S.info[key] = val; scheduleSave(); }
+function renderInfo() {
+  const el = $('#panelInfo'); if (el.hidden) return;
+  el.replaceChildren();
+  const i = S.info;
+  if (S.isOrg) {
+    el.append(
+      h('div', { class: 'frow one' }, h('label', { text: 'Date' }, h('input', { type: 'date', value: i.date || '', onchange: e => setInfo('date', e.target.value) }))),
+      h('div', { class: 'frow' },
+        h('label', { text: 'Meet at' }, h('input', { type: 'time', value: i.meet || '', onchange: e => setInfo('meet', e.target.value) })),
+        h('label', { text: 'Ends at' }, h('input', { type: 'time', value: i.end || '', onchange: e => setInfo('end', e.target.value) }))),
+      h('label', { text: 'Details' }, h('textarea', { maxlength: '1000', placeholder: 'Where to park, rules, what to bring, radio channel…',
+        oninput: e => setInfo('notes', e.target.value.slice(0, 1000)) }, i.notes || '')),
+      h('p', { class: 'sub', style: 'margin-top:10px', text: 'Everyone in the cruise sees this and it updates live.' }));
+    return;
+  }
+  if (!hasInfo(i)) { el.append(h('p', { class: 'empty', text: 'The organiser hasn’t added any details yet. They’ll show up here.' })); return; }
+  const day = fmtDay(i.date), meet = fmtClock(i.meet), end = fmtClock(i.end);
+  const box = (lab, val) => h('div', { class: 'tbox' }, h('small', { text: lab }), h('b', { text: val }));
+  el.append(h('div', { class: 'infocard' },
+    day ? h('div', { class: 'infoday', text: day }) : null,
+    (meet || end) ? h('div', { class: 'times' }, meet ? box('Meet at', meet) : null, end ? box('Ends at', end) : null) : null));
+  if (i.notes) el.append(h('p', { class: 'notes', text: i.notes }));
 }
 
 /* ---------- place search (side drawer) ---------- */
