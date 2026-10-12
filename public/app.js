@@ -619,7 +619,9 @@ function onPhotos(list) {
 function renderPhotos() {
   const el = $('#panelPhotos'); if (el.hidden) return;
   el.replaceChildren(
-    h('button', { class: 'primary', style: 'width:100%;margin:8px 0 12px', text: 'Add photos', onclick: () => $('#photoInput').click() }));
+    h('div', { class: 'btnrow', style: 'margin:8px 0 12px' },
+      h('button', { class: 'primary', text: 'Take photo', onclick: () => $('#cameraInput').click() }),
+      h('button', { class: 'ghost', text: 'Choose photos', onclick: () => $('#photoInput').click() })));
   if (!S.photos.length) { el.append(h('p', { class: 'empty', text: 'No photos yet. Photos you take during the cruise are pinned where you took them.' })); return; }
   const grid = h('div', { class: 'pgrid' });
   [...S.photos].reverse().forEach(p => {
@@ -751,6 +753,7 @@ $('#searchBtn').addEventListener('click', () => { $('#searchDrawer').classList.c
 $('#searchClose').addEventListener('click', closeSearch);
 $('#searchForm').addEventListener('submit', e => { e.preventDefault(); runSearch($('#searchInput').value); });
 $('#photoInput').addEventListener('change', e => { const f = e.target.files; if (f && f.length) uploadPhotos(f); e.target.value = ''; });
+$('#cameraInput').addEventListener('change', e => { const f = e.target.files; if (f && f.length) uploadPhotos(f); e.target.value = ''; });
 $('#lbClose').addEventListener('click', closeLightbox);
 $('#lbPrev').addEventListener('click', () => stepLightbox(-1));
 $('#lbNext').addEventListener('click', () => stepLightbox(1));

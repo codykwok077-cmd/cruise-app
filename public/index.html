@@ -12,7 +12,7 @@
 <link rel="icon" href="/icon-192.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css?v=3">
 </head>
 <body>
 <div id="app">
@@ -34,6 +34,7 @@
       <button id="joinBtn" class="ghost">Join</button>
     </div>
     <p id="homeMsg" class="msg"></p>
+    <p class="ver">Version 3</p>
   </section>
 
   <section id="cruise" class="screen" hidden>
@@ -109,12 +110,13 @@
   </div>
 
   <input id="photoInput" type="file" accept="image/*" multiple hidden>
+  <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden>
 
   <div id="toast" class="toast" hidden></div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
-<script src="/config.js"></script>
-<script src="/app.js"></script>
+<script src="/config.js?v=3"></script>
+<script src="/app.js?v=3"></script>
 </body>
 </html>

@@ -152,3 +152,5 @@ input:focus{border-color:var(--accent)}
 .lbbtns{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
 .lbbtn{height:40px;padding:0 16px;border-radius:12px;background:rgba(255,255,255,.14);color:#fff;font-weight:600;font-size:14px}
 .lbbtn[hidden]{display:none}
+
+.ver{text-align:center;color:var(--muted);font-size:12px;margin:0}
