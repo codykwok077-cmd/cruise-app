@@ -4,7 +4,8 @@
 const CFG = Object.assign({
   tileUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   tileAttribution: '&copy; OpenStreetMap contributors',
-  osrmUrl: 'https://router.project-osrm.org'
+  osrmUrl: 'https://router.project-osrm.org',
+  geocodeUrl: 'https://nominatim.openstreetmap.org/search'
 }, window.CRUISE_CONFIG || {});
 
 /* ---------- helpers ---------- */
@@ -76,11 +77,12 @@ const S = {
   myId: null, nick: '', color: COLORS[0],
   me: { lat: null, lng: null, hd: null, sp: null, has: false },
   watchId: null, wake: null, wakeState: 'idle', wantAwake: false,
-  demo: false, demoCars: [], active: false
+  demo: false, demoCars: [], active: false,
+  photos: []
 };
 
 /* ---------- map ---------- */
-let map, routeCasing, routeLine, pointLayer, carLayer, myEntry = null;
+let map, routeCasing, routeLine, pointLayer, carLayer, photoLayer, searchMarker = null, myEntry = null;
 const carEntries = new Map();
 
 function initMap() {
@@ -91,6 +93,7 @@ function initMap() {
   routeCasing = L.polyline([], { color: '#fff', weight: 11, opacity: .95, lineJoin: 'round', lineCap: 'round', interactive: false }).addTo(map);
   routeLine = L.polyline([], { color: '#ff4d2e', weight: 5, lineJoin: 'round', lineCap: 'round', interactive: false }).addTo(map);
   pointLayer = L.layerGroup().addTo(map);
+  photoLayer = L.layerGroup().addTo(map);
   carLayer = L.layerGroup().addTo(map);
   map.on('click', onMapClick);
   window.addEventListener('resize', () => map.invalidateSize());
@@ -173,8 +176,15 @@ function addPoint(ll) {
   if (S.points.length > 1) { S.paths.push(null); snap(S.points.length - 2); }
   S.sel = -1; changed();
 }
-function addStop(ll) {
-  if (S.points.length < 2) { toast('Draw at least two route points first'); return; }
+function addStop(ll, name) {
+  const pt = { lat: +ll.lat.toFixed(6), lng: +ll.lng.toFixed(6), stop: true, name: (name || '').slice(0, 40) };
+  if (S.points.length < 2) {
+    if (!name) { toast('Draw at least two route points first'); return false; }
+    S.points.push(pt);
+    if (S.points.length > 1) { S.paths.push(null); snap(S.points.length - 2); }
+    S.sel = S.points.length - 1; changed(); showTab('Route');
+    return true;
+  }
   const tap = map.latLngToLayerPoint(ll);
   let best = 0, bd = Infinity;
   for (let i = 0; i < S.points.length - 1; i++) {
@@ -184,11 +194,12 @@ function addStop(ll) {
       if (d < bd) { bd = d; best = i; }
     }
   }
-  S.points.splice(best + 1, 0, { lat: +ll.lat.toFixed(6), lng: +ll.lng.toFixed(6), stop: true, name: '' });
+  S.points.splice(best + 1, 0, pt);
   S.paths.splice(best, 1, null, null);
   snap(best); snap(best + 1);
   S.sel = best + 1; changed(); showTab('Route');
-  toast('Stop added — name it in the Route tab');
+  if (!name) toast('Stop added — name it in the Route tab');
+  return true;
 }
 function removePoint(j) {
   S.points.splice(j, 1);
@@ -226,11 +237,12 @@ async function flushSave() {
 
 /* ---------- panels ---------- */
 function showTab(name) {
-  ['Route', 'People', 'Share'].forEach(n => { $('#panel' + n).hidden = n !== name; });
+  ['Route', 'People', 'Share', 'Photos'].forEach(n => { $('#panel' + n).hidden = n !== name; });
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
   $('#sheet').classList.remove('collapsed');
   if (name === 'People') renderPeople();
   if (name === 'Share') renderShare();
+  if (name === 'Photos') renderPhotos();
 }
 function flyTo(lat, lng, z) { if (map) map.flyTo([lat, lng], Math.max(map.getZoom(), z || 15), { duration: .6 }); }
 
@@ -429,6 +441,7 @@ function connect() {
   const es = new EventSource('/api/cruises/' + S.code + '/events');
   es.addEventListener('state', e => onState(JSON.parse(e.data)));
   es.addEventListener('cars', e => onCars(JSON.parse(e.data)));
+  es.addEventListener('photos', e => onPhotos(JSON.parse(e.data)));
   es.onopen = () => { S.live = true; updateChips(); postPos(true); };
   es.onerror = () => { S.live = false; updateChips(); };
   S.es = es;
@@ -499,7 +512,8 @@ function leaveCruise() {
   releaseWake(); clearInterval(demoT); S.demo = false; S.demoCars = [];
   S.points = []; S.paths = []; S.code = null; S.adminKey = null; S.isOrg = false; S.cars = new Map();
   S.me = { lat: null, lng: null, hd: null, sp: null, has: false }; lastFix = null;
-  clearCars(); if (map) { routeCasing.setLatLngs([]); routeLine.setLatLngs([]); pointLayer.clearLayers(); }
+  clearCars(); if (map) { routeCasing.setLatLngs([]); routeLine.setLatLngs([]); pointLayer.clearLayers(); photoLayer.clearLayers(); }
+  S.photos = []; { const pt = document.querySelector('#tabs [data-tab="Photos"]'); if (pt) pt.textContent = 'Photos'; } closeSearch(); clearSearchMarker(); closeLightbox(); $('#searchResults').replaceChildren(); $('#searchInput').value = '';
   history.replaceState(null, '', '/');
   $('#cruise').hidden = true; $('#home').hidden = false; $('#locating').hidden = true;
 }
@@ -534,6 +548,180 @@ async function joinCruise(codeIn) {
   } catch (e) { homeMsg('Couldn’t reach the server. Check your connection and try again.'); }
 }
 
+/* ---------- place search (side drawer) ---------- */
+let lastSearch = 0, searching = false;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function openSearch() { $('#searchDrawer').classList.add('open'); setTimeout(() => $('#searchInput').focus(), 250); }
+function closeSearch() { $('#searchDrawer').classList.remove('open'); }
+function clearSearchMarker() { if (searchMarker && map) { map.removeLayer(searchMarker); } searchMarker = null; }
+function showSearchMarker(lat, lng) {
+  clearSearchMarker();
+  searchMarker = L.marker([lat, lng], { icon: L.divIcon({ className: 'pt', html: h('div', { class: 'pin search' }), iconSize: [0, 0] }), interactive: false, zIndexOffset: 900 }).addTo(map);
+}
+async function runSearch(q) {
+  q = q.trim();
+  const box = $('#searchResults');
+  if (q.length < 2 || searching) return;
+  searching = true; $('#searchGo').disabled = true;
+  box.replaceChildren(h('p', { class: 'empty', text: 'Searching…' }));
+  try {
+    const wait = 1100 - (Date.now() - lastSearch);   // public geocoder allows ~1 request per second
+    if (wait > 0) await sleep(wait);
+    lastSearch = Date.now();
+    const params = new URLSearchParams({ q, format: 'jsonv2', limit: '8', 'accept-language': navigator.language || 'en' });
+    if (map && map.getZoom() >= 8) { const b = map.getBounds(); params.set('viewbox', [b.getWest(), b.getNorth(), b.getEast(), b.getSouth()].join(',')); }
+    const r = await fetch(CFG.geocodeUrl + '?' + params.toString(), { headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error();
+    const list = await r.json();
+    renderResults(Array.isArray(list) ? list : []);
+  } catch (e) {
+    box.replaceChildren(h('p', { class: 'empty', text: 'Search isn’t available right now. Check your connection and try again.' }));
+  }
+  searching = false; $('#searchGo').disabled = false;
+}
+function renderResults(list) {
+  const box = $('#searchResults'); box.replaceChildren();
+  if (!list.length) { box.append(h('p', { class: 'empty', text: 'No places found. Try a different name or add a suburb.' })); return; }
+  list.forEach(res => {
+    const lat = parseFloat(res.lat), lng = parseFloat(res.lon);
+    if (!isFinite(lat) || !isFinite(lng)) return;
+    const full = String(res.display_name || '');
+    const title = String(res.name || full.split(',')[0] || 'Place').slice(0, 60);
+    const rest = full.split(',').slice(1).join(',').trim().slice(0, 120);
+    const row = h('div', { class: 'result' },
+      h('button', { class: 'rtext', onclick: () => { showSearchMarker(lat, lng); flyTo(lat, lng, 16); if (window.innerWidth < 700) closeSearch(); } },
+        h('b', { text: title }), h('small', { text: rest })));
+    if (S.isOrg) {
+      row.append(h('div', { class: 'ractions' },
+        h('button', { class: 'outline sm', text: 'Add as stop', onclick: () => {
+          if (addStop({ lat, lng }, title)) { clearSearchMarker(); toast('Added “' + title + '” as a stop'); flyTo(lat, lng, 15); if (window.innerWidth < 700) closeSearch(); }
+        } }),
+        h('button', { class: 'outline sm', text: 'Add to route', onclick: () => {
+          addPoint({ lat, lng }); clearSearchMarker(); toast('Added to the route'); flyTo(lat, lng, 15); if (window.innerWidth < 700) closeSearch();
+        } })));
+    }
+    box.append(row);
+  });
+  if (!S.isOrg) box.append(h('p', { class: 'empty', text: 'Only the organiser can add places to the route. Tap a result to see it on the map.' }));
+}
+
+/* ---------- photos ---------- */
+const photoUrl = (p, thumb) => '/api/cruises/' + S.code + '/photos/' + p.id + (thumb ? '/thumb' : '');
+const fmtWhen = t => { try { return new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch (e) { return ''; } };
+
+function onPhotos(list) {
+  S.photos = Array.isArray(list) ? list : [];
+  const tab = document.querySelector('#tabs [data-tab="Photos"]');
+  if (tab) tab.textContent = 'Photos' + (S.photos.length ? ' ' + S.photos.length : '');
+  renderPhotos(); syncPhotoPins();
+  if (lbIndex >= 0) { if (!S.photos.length || !S.photos.find(p => p.id === lbId)) closeLightbox(); }
+}
+function renderPhotos() {
+  const el = $('#panelPhotos'); if (el.hidden) return;
+  el.replaceChildren(
+    h('button', { class: 'primary', style: 'width:100%;margin:8px 0 12px', text: 'Add photos', onclick: () => $('#photoInput').click() }));
+  if (!S.photos.length) { el.append(h('p', { class: 'empty', text: 'No photos yet. Photos you take during the cruise are pinned where you took them.' })); return; }
+  const grid = h('div', { class: 'pgrid' });
+  [...S.photos].reverse().forEach(p => {
+    grid.append(h('button', { class: 'ph', 'aria-label': 'Photo by ' + p.name, onclick: () => openLightbox(p.id) },
+      h('img', { src: photoUrl(p, true), alt: 'Photo by ' + p.name, loading: 'lazy' })));
+  });
+  el.append(grid);
+}
+function syncPhotoPins() {
+  if (!photoLayer) return;
+  photoLayer.clearLayers();
+  S.photos.forEach(p => {
+    if (p.lat == null || p.lng == null) return;
+    const el = h('div', { class: 'phpin' }, h('img', { src: photoUrl(p, true), alt: '' }));
+    const m = L.marker([p.lat, p.lng], { icon: L.divIcon({ className: 'pt', html: el, iconSize: [0, 0] }), keyboard: false, zIndexOffset: 200 });
+    m.on('click', () => openLightbox(p.id));
+    photoLayer.addLayer(m);
+  });
+}
+
+function loadBitmap(file) {
+  if (window.createImageBitmap) return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => loadImg(file));
+  return loadImg(file);
+}
+function loadImg(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('bad image')); };
+    img.src = url;
+  });
+}
+function encodeJpeg(src, max, q) {
+  const w0 = src.width || src.naturalWidth, h0 = src.height || src.naturalHeight, k = Math.min(1, max / Math.max(w0, h0));
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w0 * k)); c.height = Math.max(1, Math.round(h0 * k));
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', q);
+}
+async function prepareImage(file) {
+  const src = await loadBitmap(file);
+  let full = null;
+  for (const [max, q] of [[1280, .78], [1024, .66], [800, .6], [640, .55]]) {
+    full = encodeJpeg(src, max, q);
+    if ((full.length - 23) * 0.75 < 880 * 1024) break;
+  }
+  const thumb = encodeJpeg(src, 320, .7);
+  if (src.close) try { src.close(); } catch (e) {}
+  return { full, thumb };
+}
+async function uploadPhotos(files) {
+  const list = [...files].filter(f => /^image\//.test(f.type) || !f.type).slice(0, 10);
+  if (!list.length) return;
+  let ok = 0;
+  for (let i = 0; i < list.length; i++) {
+    const f = list[i];
+    toast('Uploading ' + (i + 1) + ' of ' + list.length + '…');
+    try {
+      const { full, thumb } = await prepareImage(f);
+      const fresh = S.me.has && f.lastModified && Date.now() - f.lastModified < 15 * 60 * 1000;   // taken just now: pin it here
+      const r = await fetch('/api/cruises/' + S.code + '/photos', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: S.nick, by: S.myId, lat: fresh ? S.me.lat : null, lng: fresh ? S.me.lng : null, image: full, thumb })
+      });
+      if (r.status === 413) { const d = await r.json().catch(() => ({})); toast(d.error || 'This cruise is out of photo space'); break; }
+      if (!r.ok) throw new Error();
+      const d = await r.json(); store.set('cruise_ptok_' + d.id, d.token); ok++;
+    } catch (e) { toast('Couldn’t upload that photo'); }
+  }
+  if (ok) toast(ok === 1 ? 'Photo added' : ok + ' photos added');
+}
+
+/* lightbox */
+let lbIndex = -1, lbId = null, lbArm = null;
+function openLightbox(id) {
+  const i = S.photos.findIndex(p => p.id === id); if (i < 0) return;
+  lbIndex = i; lbId = id;
+  const p = S.photos[i];
+  $('#lbImg').src = photoUrl(p, false); $('#lbImg').alt = 'Photo by ' + p.name;
+  $('#lbCap').textContent = p.name + ' · ' + fmtWhen(p.t) + (S.photos.length > 1 ? '  (' + (i + 1) + '/' + S.photos.length + ')' : '');
+  const canDelete = S.isOrg || !!store.get('cruise_ptok_' + p.id);
+  $('#lbDelete').hidden = !canDelete; $('#lbDelete').textContent = 'Delete'; if (lbArm) { clearTimeout(lbArm); lbArm = null; }
+  $('#lbMap').hidden = p.lat == null;
+  $('#lbPrev').hidden = $('#lbNext').hidden = S.photos.length < 2;
+  $('#lightbox').hidden = false;
+}
+function closeLightbox() { $('#lightbox').hidden = true; lbIndex = -1; lbId = null; $('#lbImg').removeAttribute('src'); }
+function stepLightbox(d) { if (lbIndex < 0 || S.photos.length < 2) return; openLightbox(S.photos[(lbIndex + d + S.photos.length) % S.photos.length].id); }
+async function deleteCurrentPhoto() {
+  const p = S.photos[lbIndex]; if (!p) return;
+  const btn = $('#lbDelete');
+  if (!lbArm) { btn.textContent = 'Sure?'; lbArm = setTimeout(() => { lbArm = null; btn.textContent = 'Delete'; }, 3000); return; }
+  clearTimeout(lbArm); lbArm = null;
+  const headers = {}, tok = store.get('cruise_ptok_' + p.id);
+  if (tok) headers['x-photo-token'] = tok;
+  if (S.isOrg && S.adminKey) headers['x-admin-key'] = S.adminKey;
+  try {
+    const r = await fetch('/api/cruises/' + S.code + '/photos/' + p.id, { method: 'DELETE', headers });
+    if (!r.ok && r.status !== 404) throw new Error();
+    store.del('cruise_ptok_' + p.id); closeLightbox(); toast('Photo deleted');
+  } catch (e) { toast('Couldn’t delete that photo'); btn.textContent = 'Delete'; }
+}
+
 /* ---------- wiring ---------- */
 $('#startBtn').addEventListener('click', startCruise);
 $('#joinBtn').addEventListener('click', () => joinCruise());
@@ -559,6 +747,21 @@ $('#tabs').addEventListener('click', e => {
   showTab(b.dataset.tab);
 });
 $('#handle').addEventListener('click', () => $('#sheet').classList.toggle('collapsed'));
+$('#searchBtn').addEventListener('click', () => { $('#searchDrawer').classList.contains('open') ? closeSearch() : openSearch(); });
+$('#searchClose').addEventListener('click', closeSearch);
+$('#searchForm').addEventListener('submit', e => { e.preventDefault(); runSearch($('#searchInput').value); });
+$('#photoInput').addEventListener('change', e => { const f = e.target.files; if (f && f.length) uploadPhotos(f); e.target.value = ''; });
+$('#lbClose').addEventListener('click', closeLightbox);
+$('#lbPrev').addEventListener('click', () => stepLightbox(-1));
+$('#lbNext').addEventListener('click', () => stepLightbox(1));
+$('#lbDelete').addEventListener('click', deleteCurrentPhoto);
+$('#lbMap').addEventListener('click', () => { const p = S.photos[lbIndex]; if (p && p.lat != null) { closeLightbox(); flyTo(p.lat, p.lng, 16); } });
+$('#lightbox').addEventListener('click', e => { if (e.target.id === 'lightbox') closeLightbox(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { if (!$('#lightbox').hidden) closeLightbox(); else closeSearch(); }
+  else if (!$('#lightbox').hidden && e.key === 'ArrowLeft') stepLightbox(-1);
+  else if (!$('#lightbox').hidden && e.key === 'ArrowRight') stepLightbox(1);
+});
 document.addEventListener('pointerdown', () => { if (S.active && S.wantAwake && S.wakeState !== 'on') acquireWake(); }, { passive: true });
 
 /* ---------- init ---------- */

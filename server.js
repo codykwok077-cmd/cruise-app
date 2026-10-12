@@ -16,6 +16,9 @@ const PUB = path.join(__dirname, 'public');
 const DATA_FILE = process.env.DATA_FILE || '';
 const CRUISE_TTL = 48 * 3600 * 1000;   // forget cruises idle for 48h
 const CAR_TTL = 90 * 1000;             // drop cars that stop reporting for 90s
+const MAX_PHOTOS = 80;                 // per cruise
+const MAX_PHOTO_BYTES = 40 * 1024 * 1024; // per cruise, all photos together
+const MAX_FULL = 900 * 1024, MAX_THUMB = 80 * 1024;
 
 const cruises = new Map();
 let persistDirty = false;
@@ -31,7 +34,7 @@ function load() {
   if (!DATA_FILE) return;
   try {
     const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    for (const c of raw) cruises.set(c.code, { ...c, cars: new Map(), clients: new Set(), carsDirty: false });
+    for (const c of raw) cruises.set(c.code, { ...c, cars: new Map(), clients: new Set(), carsDirty: false, photos: [], photoBytes: 0 });
     console.log('Loaded', cruises.size, 'cruises');
   } catch (e) { /* first run */ }
 }
@@ -85,6 +88,15 @@ function cleanPaths(arr, nPoints) {
 }
 const publicState = c => ({ code: c.code, name: c.name, points: c.points, paths: c.paths });
 const carsList = c => [...c.cars.values()].map(({ id, name, color, lat, lng, hd, sp, t }) => ({ id, name, color, lat, lng, hd, sp, t }));
+const photosMeta = c => c.photos.map(({ id, by, name, t, lat, lng }) => ({ id, by, name, t, lat, lng }));
+function decodeJpeg(dataUrl, max) {
+  const m = /^data:image\/jpeg;base64,([A-Za-z0-9+\/=]+)$/.exec(typeof dataUrl === 'string' ? dataUrl : '');
+  if (!m) return null;
+  const buf = Buffer.from(m[1], 'base64');
+  if (!buf.length || buf.length > max) return null;
+  if (buf[0] !== 0xff || buf[1] !== 0xd8 || buf[2] !== 0xff) return null;   // must really be a JPEG
+  return buf;
+}
 function sse(res, event, data) { res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n'); }
 function touch(c) { c.updated = Date.now(); persistDirty = true; }
 function sameKey(a, b) {
@@ -101,13 +113,14 @@ async function api(req, res, url) {
     const code = genCode();
     const c = {
       code, name: str(b.name, 40) || 'Sunday cruise', adminKey: crypto.randomBytes(16).toString('hex'),
-      points: [], paths: [], updated: Date.now(), cars: new Map(), clients: new Set(), carsDirty: false
+      points: [], paths: [], updated: Date.now(), cars: new Map(), clients: new Set(), carsDirty: false,
+      photos: [], photoBytes: 0
     };
     cruises.set(code, c); persistDirty = true;
     return send(res, 201, { ...publicState(c), adminKey: c.adminKey });
   }
 
-  const m = p.match(/^\/api\/cruises\/([a-z0-9]{4,10})(?:\/(events|pos))?$/);
+  const m = p.match(/^\/api\/cruises\/([a-z0-9]{4,10})(?:\/(events|pos|photos)(?:\/([a-f0-9]{8,24})(?:\/(thumb))?)?)?$/);
   if (!m) return send(res, 404, { error: 'not found' });
   const c = cruises.get(m[1]);
   if (!c) return send(res, 404, { error: 'no such cruise' });
@@ -149,9 +162,49 @@ async function api(req, res, url) {
     res.write('retry: 2000\n\n');
     sse(res, 'state', publicState(c));
     sse(res, 'cars', carsList(c));
+    sse(res, 'photos', photosMeta(c));
     c.clients.add(res);
     req.on('close', () => c.clients.delete(res));
     return;
+  }
+
+  if (m[2] === 'photos') {
+    // upload
+    if (!m[3] && req.method === 'POST') {
+      const b = await readBody(req, 1_600_000);
+      const full = decodeJpeg(b.image, MAX_FULL), thumb = decodeJpeg(b.thumb, MAX_THUMB);
+      if (!full || !thumb) return send(res, 400, { error: 'photo must be a JPEG under the size limit' });
+      if (c.photos.length >= MAX_PHOTOS) return send(res, 413, { error: 'This cruise has reached its photo limit' });
+      if (c.photoBytes + full.length + thumb.length > MAX_PHOTO_BYTES) return send(res, 413, { error: 'This cruise has run out of photo space' });
+      const lat = num(b.lat), lng = num(b.lng);
+      const ok = lat != null && lng != null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+      const photo = {
+        id: crypto.randomBytes(6).toString('hex'), token: crypto.randomBytes(12).toString('hex'),
+        by: str(b.by, 24), name: str(b.name, 20) || 'Driver', t: Date.now(),
+        lat: ok ? +lat.toFixed(6) : null, lng: ok ? +lng.toFixed(6) : null, full, thumb
+      };
+      c.photos.push(photo); c.photoBytes += full.length + thumb.length; c.updated = Date.now();
+      const meta = photosMeta(c);
+      for (const r of c.clients) sse(r, 'photos', meta);
+      return send(res, 201, { id: photo.id, token: photo.token });
+    }
+    const ph = m[3] ? c.photos.find(x => x.id === m[3]) : null;
+    // view
+    if (m[3] && req.method === 'GET') {
+      if (!ph) return send(res, 404, { error: 'no such photo' });
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=86400, immutable', 'X-Content-Type-Options': 'nosniff' });
+      return res.end(m[4] ? ph.thumb : ph.full);
+    }
+    // delete (uploader's token, or the organiser's key)
+    if (m[3] && !m[4] && req.method === 'DELETE') {
+      if (!ph) return send(res, 404, { error: 'no such photo' });
+      const allowed = sameKey(req.headers['x-photo-token'], ph.token) || sameKey(req.headers['x-admin-key'], c.adminKey);
+      if (!allowed) return send(res, 403, { error: 'not allowed' });
+      c.photos = c.photos.filter(x => x !== ph); c.photoBytes -= ph.full.length + ph.thumb.length; c.updated = Date.now();
+      const meta = photosMeta(c);
+      for (const r of c.clients) sse(r, 'photos', meta);
+      return send(res, 204, null);
+    }
   }
 
   return send(res, 405, { error: 'method not allowed' });
@@ -167,7 +220,7 @@ function serveStatic(req, res, url) {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('Not found'); }
     res.writeHead(200, {
       'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
-      'Cache-Control': file.endsWith('index.html') ? 'no-cache' : 'public, max-age=3600'
+      'Cache-Control': /\.(png|ico)$/.test(file) ? 'public, max-age=86400' : 'no-cache'   // always pick up new versions of the app
     });
     res.end(buf);
   });

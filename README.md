@@ -29,6 +29,8 @@ Any host that runs Node and gives you HTTPS works. Easiest options:
 Notes:
 - Cruises are held in memory and forgotten after 48 hours idle. To keep routes across restarts, set
   `DATA_FILE=/some/persistent/path/cruises.json` (needs a persistent disk on the host).
+- Photos are held in server memory only (up to 80 per cruise, about 40 MB) and are lost when the server
+  restarts or the cruise expires. Anyone with the cruise code can add photos; the organiser can remove them.
 - Run a single instance. Live state is in that one process.
 - Free hosting tiers often sleep when idle, so the first open can take ~30 seconds.
 
@@ -44,6 +46,7 @@ It then opens full screen like a normal app.
 
 - `tileUrl`: map tiles. OpenStreetMap's own server is fine for testing and small groups; for a
   busy public app use a provider with a key (MapTiler, Stadia, Thunderforest) and paste its URL.
+- `geocodeUrl`: place search (Nominatim-style). The public server is for light use only.
 - `osrmUrl`: road snapping. The public demo server is for light use; host your own OSRM or use an
   OSRM-compatible service for heavy use. Turn "Roads" off in the app to draw straight lines.
 
@@ -51,6 +54,10 @@ It then opens full screen like a normal app.
 
 - `server.js`: serves `public/`, stores cruises, pushes route and car positions with Server-Sent Events.
 - `public/app.js`: the app (Leaflet map, route drawing, live cars, wake lock).
+- **Place search**: the magnifier button opens a side drawer. Search for a place (cafe, beach, address),
+  tap a result to see it on the map, and the organiser can add it as a stop or a route point.
+- **Photos**: everyone can add photos from the Photos tab. Photos taken just now are pinned on the map where
+  they were taken. The person who added a photo can delete it, and so can the organiser.
 - The organiser gets a secret key when they start a cruise (stored on their device). Only that key can
   change the route. Joiners can only watch and share their own position.
 - Anyone with the code can join. There are no accounts.

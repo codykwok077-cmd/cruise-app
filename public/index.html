@@ -61,6 +61,7 @@
 
     <div class="dock">
       <div class="mapctl">
+        <button id="searchBtn" class="pill" aria-label="Search places"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg></button>
         <button id="zin" class="pill" aria-label="Zoom in">+</button>
         <button id="zout" class="pill" aria-label="Zoom out">−</button>
         <button id="locate" class="pill" aria-label="My location"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
@@ -72,15 +73,42 @@
           <button data-tab="Route" class="on">Route</button>
           <button data-tab="People">Cruisers</button>
           <button data-tab="Share">Share</button>
+          <button data-tab="Photos">Photos</button>
         </div>
         <div class="panels">
           <div id="panelRoute" class="panel"></div>
           <div id="panelPeople" class="panel" hidden></div>
           <div id="panelShare" class="panel" hidden></div>
+          <div id="panelPhotos" class="panel" hidden></div>
         </div>
       </div>
     </div>
   </section>
+
+  <aside id="searchDrawer" class="drawer" aria-label="Search places">
+    <div class="drawer-head"><b>Search places</b><button id="searchClose" class="mini" aria-label="Close search">✕</button></div>
+    <form id="searchForm" class="searchbox">
+      <input id="searchInput" type="search" placeholder="Cafe, beach, address…" autocomplete="off" enterkeyhint="search" maxlength="120">
+      <button id="searchGo" class="ghost" type="submit">Search</button>
+    </form>
+    <div id="searchResults" class="results"><p class="empty">Look up a place, then tap it to see it on the map. The organiser can add it as a stop or a route point.</p></div>
+  </aside>
+
+  <div id="lightbox" class="lightbox" hidden>
+    <img id="lbImg" alt="">
+    <div class="lbbar">
+      <span id="lbCap"></span>
+      <div class="lbbtns">
+        <button id="lbPrev" class="lbbtn" aria-label="Previous photo">‹</button>
+        <button id="lbNext" class="lbbtn" aria-label="Next photo">›</button>
+        <button id="lbMap" class="lbbtn" hidden>On map</button>
+        <button id="lbDelete" class="lbbtn" hidden>Delete</button>
+        <button id="lbClose" class="lbbtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <input id="photoInput" type="file" accept="image/*" multiple hidden>
 
   <div id="toast" class="toast" hidden></div>
 </div>
