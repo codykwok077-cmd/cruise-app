@@ -1,0 +1,9 @@
+{
+  "name": "cruise",
+  "version": "1.0.0",
+  "description": "Live car cruise planner: draw a route, share a link, see every car live.",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}
