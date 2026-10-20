@@ -68,7 +68,7 @@ input:focus{border-color:var(--accent)}
 .locating{position:absolute;left:50%;top:122px;transform:translateX(-50%);padding:8px 14px;font-size:13px;font-weight:500}
 .dock{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;pointer-events:none}
 .dock>*{pointer-events:auto}
-.mapctl{align-self:flex-end;margin:0 12px 12px;display:flex;flex-direction:column;gap:8px}
+.mapctl{margin-left:auto;display:flex;flex-direction:column;gap:8px;pointer-events:auto}
 .mapctl button{width:44px;height:44px;font-size:20px;font-weight:600;display:grid;place-items:center}
 .sheet{background:var(--surface);border-radius:24px 24px 0 0;box-shadow:0 -8px 28px rgba(16,24,40,.12);border:1px solid var(--line);border-bottom:0;display:flex;flex-direction:column;max-height:46vh}
 .handle{width:40px;height:5px;border-radius:3px;background:var(--line);margin:8px auto 0;flex:none}
@@ -169,3 +169,29 @@ textarea:focus{border-color:var(--accent)}
 .tbox small{color:var(--muted);font-size:12px}
 .tbox b{font-size:22px;letter-spacing:-.02em}
 .notes{white-space:pre-wrap;line-height:1.5;font-size:15px;margin:0 0 4px}
+
+/* start route + driving mode */
+.dockrow{display:flex;align-items:flex-end;justify-content:space-between;padding:0 12px 12px;pointer-events:none}
+.startbtn{height:54px;padding:0 24px;border-radius:999px;background:var(--accent);color:#fff;font-weight:700;font-size:17px;box-shadow:var(--shadow);display:flex;align-items:center;gap:10px;pointer-events:auto}
+.startbtn[hidden]{display:none}
+.startbtn:disabled{opacity:.6}
+.navtop{position:absolute;left:12px;right:12px;top:12px;z-index:1200;background:#12151a;color:#fff;border-radius:20px;padding:12px 14px;display:flex;gap:14px;align-items:center;box-shadow:var(--shadow)}
+.navtop[hidden]{display:none}
+.navicon{width:68px;height:68px;border-radius:16px;background:var(--accent);display:grid;place-items:center;font-size:42px;font-weight:700;flex:none}
+.navicon span{display:block;line-height:1;transition:transform .2s}
+.navtext{min-width:0;display:flex;flex-direction:column;gap:2px}
+.navdist{font-size:32px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+.navinstr{font-size:17px;font-weight:600;line-height:1.25}
+.navthen{font-size:13px;color:#aab2bf}
+.navthen:empty{display:none}
+.navbottom{margin:0 12px 12px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);border-radius:20px;padding:12px 14px;display:flex;align-items:center;gap:10px}
+.navbottom[hidden]{display:none}
+.navstats{flex:1;min-width:0;display:flex;flex-direction:column}
+.navstats b{font-size:24px;letter-spacing:-.02em}
+.navstats small{color:var(--muted);font-size:13px}
+.navbtn{height:46px;padding:0 14px;border-radius:12px;background:var(--bg);font-weight:600;font-size:14px;color:var(--ink)}
+.navbtn.end{background:#d92d20;color:#fff}
+.driving .top,.driving .tools,.driving .hint,.driving .sheet,.driving .startbtn,.driving #searchBtn,.driving .locating{display:none!important}
+
+/* follow */
+.mapctl .pill.active{background:var(--accent);color:#fff;border-color:transparent}

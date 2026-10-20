@@ -12,7 +12,7 @@
 <link rel="icon" href="/icon-192.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
-<link rel="stylesheet" href="/style.css?v=4">
+<link rel="stylesheet" href="/style.css?v=7">
 </head>
 <body>
 <div id="app">
@@ -34,7 +34,7 @@
       <button id="joinBtn" class="ghost">Join</button>
     </div>
     <p id="homeMsg" class="msg"></p>
-    <p class="ver">Version 4</p>
+    <p class="ver">Version 7</p>
   </section>
 
   <section id="cruise" class="screen" hidden>
@@ -60,13 +60,25 @@
     </div>
     <div id="hint" class="pill hint" hidden></div>
 
+    <div id="navTop" class="navtop" hidden>
+      <div class="navicon"><span id="navGlyph">↑</span></div>
+      <div class="navtext">
+        <div id="navDist" class="navdist"></div>
+        <div id="navInstr" class="navinstr"></div>
+        <div id="navThen" class="navthen"></div>
+      </div>
+    </div>
+
     <div class="dock">
+      <div class="dockrow">
+      <button id="startNav" class="startbtn" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4l13 8-13 8z"/></svg>Start route</button>
       <div class="mapctl">
         <button id="searchBtn" class="pill" aria-label="Search places"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg></button>
         <button id="zin" class="pill" aria-label="Zoom in">+</button>
         <button id="zout" class="pill" aria-label="Zoom out">−</button>
         <button id="locate" class="pill" aria-label="My location"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
         <button id="fit" class="pill" aria-label="Fit everything"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      </div>
       </div>
       <div class="sheet" id="sheet">
         <div class="handle" id="handle"></div>
@@ -84,6 +96,11 @@
           <div id="panelShare" class="panel" hidden></div>
           <div id="panelPhotos" class="panel" hidden></div>
         </div>
+      </div>
+      <div id="navBottom" class="navbottom" hidden>
+        <div class="navstats"><b id="navTime"></b><small id="navMeta"></small></div>
+        <button id="navMute" class="navbtn">Voice on</button>
+        <button id="navEnd" class="navbtn end">End</button>
       </div>
     </div>
   </section>
@@ -118,7 +135,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
-<script src="/config.js?v=4"></script>
-<script src="/app.js?v=4"></script>
+<script src="/config.js?v=7"></script>
+<script src="/app.js?v=7"></script>
 </body>
 </html>

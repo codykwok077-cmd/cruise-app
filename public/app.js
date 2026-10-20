@@ -5,7 +5,8 @@ const CFG = Object.assign({
   tileUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   tileAttribution: '&copy; OpenStreetMap contributors',
   osrmUrl: 'https://router.project-osrm.org',
-  geocodeUrl: 'https://nominatim.openstreetmap.org/search'
+  geocodeUrl: 'https://nominatim.openstreetmap.org/search',
+  units: 'auto'   // 'auto' (miles in the US, otherwise km), 'metric' or 'imperial'
 }, window.CRUISE_CONFIG || {});
 
 /* ---------- helpers ---------- */
@@ -71,14 +72,14 @@ function homeMsg(t) { $('#homeMsg').textContent = t || ''; }
 /* ---------- state ---------- */
 const S = {
   code: null, adminKey: null, isOrg: false, cname: '',
-  points: [], paths: [], cars: new Map(),
+  points: [], paths: [], steps: [], cars: new Map(),
   mode: 'pan', sel: -1, snap: store.get('cruise_snap') !== '0',
   loaded: false, fitted: false, es: null, live: false,
   myId: null, nick: '', color: COLORS[0],
   me: { lat: null, lng: null, hd: null, sp: null, has: false },
   watchId: null, wake: null, wakeState: 'idle', wantAwake: false,
   demo: false, demoCars: [], active: false,
-  photos: [],
+  photos: [], voice: store.get('cruise_voice') !== '0',
   info: { date: '', meet: '', end: '', notes: '' }
 };
 
@@ -97,6 +98,7 @@ function initMap() {
   photoLayer = L.layerGroup().addTo(map);
   carLayer = L.layerGroup().addTo(map);
   map.on('click', onMapClick);
+  map.on('zoomstart', () => { if (!FOL.busy) FOL.userZoomed = true; });
   window.addEventListener('resize', () => map.invalidateSize());
 }
 
@@ -144,8 +146,8 @@ function drawRoute() {
     m.on('click', () => { S.sel = i; renderRoute(); drawRoute(); showTab('Route'); });
     m.on('dragend', () => {
       const ll = m.getLatLng(); p.lat = +ll.lat.toFixed(6); p.lng = +ll.lng.toFixed(6);
-      if (i > 0) { S.paths[i - 1] = null; snap(i - 1); }
-      if (i < S.points.length - 1) { S.paths[i] = null; snap(i); }
+      if (i > 0) { S.paths[i - 1] = null; S.steps[i - 1] = null; snap(i - 1); }
+      if (i < S.points.length - 1) { S.paths[i] = null; S.steps[i] = null; snap(i); }
       changed();
     });
     pointLayer.addLayer(m);
@@ -154,19 +156,29 @@ function drawRoute() {
 
 /* ---------- editing ---------- */
 let snapWarned = false;
+function compactSteps(steps) {
+  return (steps || []).map(st => {
+    const m = st.maneuver || {}, loc = m.location || [];
+    if (loc.length < 2) return null;
+    return { la: +(+loc[1]).toFixed(6), ln: +(+loc[0]).toFixed(6), t: m.type || '', m: m.modifier || '',
+      n: String(st.name || st.ref || '').slice(0, 60), d: Math.round(st.distance || 0), u: Math.round(st.duration || 0),
+      x: m.exit != null ? m.exit : null, b: m.bearing_after != null ? m.bearing_after : null };
+  }).filter(Boolean).slice(0, 400);
+}
+function fixSteps() { while (S.steps.length < S.paths.length) S.steps.push(null); if (S.steps.length > S.paths.length) S.steps.length = S.paths.length; }
 async function snap(i) {
   if (!S.snap) return;
   const a = S.points[i], b = S.points[i + 1];
   if (!a || !b) return;
   const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 8000);
   try {
-    const url = CFG.osrmUrl + '/route/v1/driving/' + a.lng + ',' + a.lat + ';' + b.lng + ',' + b.lat + '?overview=full&geometries=polyline';
+    const url = CFG.osrmUrl + '/route/v1/driving/' + a.lng + ',' + a.lat + ';' + b.lng + ',' + b.lat + '?overview=full&geometries=polyline&steps=true';
     const r = await fetch(url, { signal: ctl.signal });
     const d = await r.json();
     if (d.code !== 'Ok' || !d.routes || !d.routes[0]) throw new Error('no route');
-    const geom = d.routes[0].geometry;
+    const geom = d.routes[0].geometry, steps = compactSteps(d.routes[0].legs && d.routes[0].legs[0] && d.routes[0].legs[0].steps);
     const idx = S.points.indexOf(a);
-    if (idx >= 0 && S.points[idx + 1] === b && geom.length < 150000) { S.paths[idx] = geom; changed(); }
+    if (idx >= 0 && S.points[idx + 1] === b && geom.length < 150000) { S.paths[idx] = geom; S.steps[idx] = steps; changed(); }
   } catch (e) {
     if (!snapWarned) { snapWarned = true; toast('Couldn’t snap to roads — drawing a straight line'); }
   } finally { clearTimeout(to); }
@@ -174,7 +186,7 @@ async function snap(i) {
 
 function addPoint(ll) {
   S.points.push({ lat: +ll.lat.toFixed(6), lng: +ll.lng.toFixed(6), stop: false, name: '' });
-  if (S.points.length > 1) { S.paths.push(null); snap(S.points.length - 2); }
+  if (S.points.length > 1) { S.paths.push(null); S.steps.push(null); snap(S.points.length - 2); }
   S.sel = -1; changed();
 }
 function addStop(ll, name) {
@@ -182,7 +194,7 @@ function addStop(ll, name) {
   if (S.points.length < 2) {
     if (!name) { toast('Draw at least two route points first'); return false; }
     S.points.push(pt);
-    if (S.points.length > 1) { S.paths.push(null); snap(S.points.length - 2); }
+    if (S.points.length > 1) { S.paths.push(null); S.steps.push(null); snap(S.points.length - 2); }
     S.sel = S.points.length - 1; changed(); showTab('Route');
     return true;
   }
@@ -196,7 +208,7 @@ function addStop(ll, name) {
     }
   }
   S.points.splice(best + 1, 0, pt);
-  S.paths.splice(best, 1, null, null);
+  S.paths.splice(best, 1, null, null); S.steps.splice(best, 1, null, null);
   snap(best); snap(best + 1);
   S.sel = best + 1; changed(); showTab('Route');
   if (!name) toast('Stop added — name it in the Route tab');
@@ -204,10 +216,10 @@ function addStop(ll, name) {
 }
 function removePoint(j) {
   S.points.splice(j, 1);
-  if (S.points.length === 0) S.paths = [];
-  else if (j === 0) S.paths.shift();
-  else if (j >= S.points.length) S.paths.pop();
-  else { S.paths.splice(j - 1, 2, null); snap(j - 1); }
+  if (S.points.length === 0) { S.paths = []; S.steps = []; }
+  else if (j === 0) { S.paths.shift(); S.steps.shift(); }
+  else if (j >= S.points.length) { S.paths.pop(); S.steps.pop(); }
+  else { S.paths.splice(j - 1, 2, null); S.steps.splice(j - 1, 2, null); snap(j - 1); }
   S.sel = -1; changed();
 }
 function onMapClick(e) {
@@ -227,7 +239,7 @@ async function flushSave() {
   try {
     const r = await fetch('/api/cruises/' + S.code, {
       method: 'PUT', headers: { 'Content-Type': 'application/json', 'x-admin-key': S.adminKey },
-      body: JSON.stringify({ name: S.cname, points: S.points, paths: S.paths, info: S.info })
+      body: JSON.stringify({ name: S.cname, points: S.points, paths: S.paths, steps: S.steps, info: S.info })
     });
     if (r.status === 403) toast('You’re not the organiser of this cruise');
     else if (!r.ok) toast('Couldn’t save the route');
@@ -257,6 +269,9 @@ function renderRoute() {
     h('div', { class: 'stat' }, h('b', { text: String(stops) }), h('small', { text: 'Stops' })),
     h('div', { class: 'stat' }, h('b', { text: pts.length > 1 ? fmtTime(total / (50 / 3.6)) : '—' }), h('small', { text: 'Drive at 50 km/h' }))
   ));
+  if (S.isOrg && S.snap && pts.length > 1 && S.paths.some((p, i) => !p || !S.steps[i])) {
+    el.append(h('button', { class: 'outline', style: 'margin:0 0 8px', text: 'Add turn directions for voice guidance', onclick: refreshDirections }));
+  }
   if (!pts.length) {
     el.append(h('p', { class: 'empty', text: S.isOrg ? 'No route yet. Pick Route above, then tap the map to lay out your cruise. Switch to Stop to drop stops along it.' : 'The organiser hasn’t drawn a route yet. It will appear here live.' }));
     return;
@@ -335,6 +350,7 @@ function updateTools() {
   else if (S.isOrg && S.mode === 'stop') { hint.textContent = S.points.length < 2 ? 'Draw a route first' : 'Tap near the route to drop a stop'; hint.hidden = false; }
   else hint.hidden = true;
   $('#undoBtn').disabled = !S.points.length;
+  $('#startNav').hidden = S.points.length < 2;
 }
 function updateChips() {
   const others = [...S.cars.keys()].filter(id => id !== S.myId).length;
@@ -431,11 +447,14 @@ function onState(st) {
   S.cname = st.name || S.cname;
   S.points = Array.isArray(st.points) ? st.points : [];
   S.paths = Array.isArray(st.paths) ? st.paths : [];
+  S.steps = Array.isArray(st.steps) ? st.steps : []; fixSteps();
   S.info = Object.assign({ date: '', meet: '', end: '', notes: '' }, st.info || {});
   S.loaded = true;
   renderInfo();
   if (first && !S.isOrg && hasInfo(S.info)) showTab('Info');
   drawRoute(); renderRoute(); updateTools(); updateChips();
+  const sig = JSON.stringify(S.points.map(p => [p.lat, p.lng, p.stop ? 1 : 0])) + JSON.stringify(S.paths.map(p => p ? p.length : 0));
+  if (NAV.on && NAV.sig && sig !== NAV.sig) { toast('The organiser changed the route'); const rt = buildRoute(); if (rt) beginNav(rt, false, sig); else endNav(false); }
   if (S.points.length && !S.fitted) { S.fitted = true; fitAll(); }
 }
 function onCars(list) {
@@ -482,6 +501,8 @@ function startGeo() {
       if (!S.points.length && !S.fitted && map) map.setView([m.lat, m.lng], 15);
     }
     syncCars(); postPos(false);
+    if (NAV.on) navFix(m.lat, m.lng, m.sp);
+    followTick(m.lat, m.lng, m.sp);
   }, err => {
     $('#locating').hidden = true;
     toast(err && err.code === 1 ? 'Location is blocked — allow it to show up on the map' : 'Couldn’t get your location');
@@ -515,7 +536,8 @@ function leaveCruise() {
   if (S.es) S.es.close(); S.es = null;
   if (S.watchId != null) navigator.geolocation.clearWatch(S.watchId); S.watchId = null;
   releaseWake(); clearInterval(demoT); S.demo = false; S.demoCars = [];
-  S.points = []; S.paths = []; S.code = null; S.adminKey = null; S.isOrg = false; S.cars = new Map();
+  FOL.drivingUntil = 0; FOL.userZoomed = false; FOL.last = null;
+  endNav(false); updateFollowUI(); S.points = []; S.paths = []; S.steps = []; S.code = null; S.adminKey = null; S.isOrg = false; S.cars = new Map();
   S.me = { lat: null, lng: null, hd: null, sp: null, has: false }; lastFix = null;
   clearCars(); if (map) { routeCasing.setLatLngs([]); routeLine.setLatLngs([]); pointLayer.clearLayers(); photoLayer.clearLayers(); }
   S.info = { date: '', meet: '', end: '', notes: '' }; S.photos = []; { const pt = document.querySelector('#tabs [data-tab="Photos"]'); if (pt) pt.textContent = 'Photos'; } closeSearch(); clearSearchMarker(); closeLightbox(); $('#searchResults').replaceChildren(); $('#searchInput').value = '';
@@ -765,6 +787,299 @@ async function deleteCurrentPhoto() {
   } catch (e) { toast('Couldn’t delete that photo'); btn.textContent = 'Delete'; }
 }
 
+/* ---------- turn-by-turn navigation with voice ---------- */
+const NAV = { on: false, route: null, coords: null, cum: null, man: null, total: 0, dur: 0, mi: 0, lastIdx: 0, s: 0,
+  offCount: 0, rerouting: false, lastReroute: 0, offset: 0, startIdx: 0, finishing: false, sig: '' };
+const useMiles = CFG.units === 'imperial' || (CFG.units !== 'metric' && /^en-US/i.test(navigator.language || ''));
+const ORD = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+const lcFirst = s => s.charAt(0).toLowerCase() + s.slice(1);
+
+function fmtNavDist(m) {
+  if (useMiles) {
+    const ft = m * 3.28084;
+    if (ft < 1000) return Math.max(10, Math.round(ft / 50) * 50) + ' ft';
+    const mi = m / 1609.344; return (mi < 10 ? mi.toFixed(1) : Math.round(mi)) + ' mi';
+  }
+  if (m < 100) return Math.max(10, Math.round(m / 10) * 10) + ' m';
+  if (m < 1000) return Math.round(m / 50) * 50 + ' m';
+  const km = m / 1000; return (km < 10 ? km.toFixed(1) : Math.round(km)) + ' km';
+}
+function sayDist(m) {
+  if (useMiles) {
+    const ft = m * 3.28084;
+    if (ft < 1000) return Math.max(100, Math.round(ft / 100) * 100) + ' feet';
+    const mi = m / 1609.344; return mi < 10 ? (Math.round(mi * 10) / 10) + ' miles' : Math.round(mi) + ' miles';
+  }
+  if (m < 1000) return Math.max(50, Math.round(m / 50) * 50) + ' metres';
+  const km = m / 1000; return (km < 10 ? km.toFixed(1) : Math.round(km)) + ' kilometres';
+}
+const sideOf = mod => /left/.test(mod || '') ? 'left' : /right/.test(mod || '') ? 'right' : '';
+function manText(m) {
+  const road = m.name ? ' onto ' + m.name : '', mod = m.mod || '', side = sideOf(mod);
+  const turnWord = { 'slight left': 'slightly left', 'slight right': 'slightly right' }[mod] || mod;
+  switch (m.type) {
+    case 'depart': return 'Head ' + COMPASS[Math.round((m.b || 0) / 45) % 8] + (m.name ? ' on ' + m.name : '');
+    case 'arrive': return m.isStop ? 'You have arrived at ' + (m.stopName || 'stop ' + m.stopNo) : 'You have arrived at the finish';
+    case 'roundabout': case 'rotary': return 'At the roundabout, take the ' + (ORD[(m.exit || 1) - 1] || (m.exit + 'th')) + ' exit' + road;
+    case 'merge': return 'Merge' + road;
+    case 'on ramp': return 'Take the ramp' + (side ? ' on the ' + side : '') + road;
+    case 'off ramp': return 'Take the exit' + (side ? ' on the ' + side : '') + road;
+    case 'fork': return side ? 'Keep ' + side + road : 'Continue straight' + road;
+    case 'new name': return 'Continue' + road;
+    case 'continue': return mod && mod !== 'straight' && mod !== 'uturn' ? 'Continue ' + turnWord + road : 'Continue straight' + road;
+    default:
+      if (mod === 'uturn') return 'Make a U-turn' + (m.name ? ' on ' + m.name : '');
+      if (!mod || mod === 'straight') return 'Continue straight' + road;
+      return 'Turn ' + turnWord + road;
+  }
+}
+function manIcon(m) {
+  if (m.type === 'arrive') return { g: '⚑', r: 0 };
+  if (m.type === 'roundabout' || m.type === 'rotary') return { g: '↻', r: 0 };
+  const rot = { 'straight': 0, 'slight right': 35, 'right': 90, 'sharp right': 140, 'uturn': 180, 'sharp left': -140, 'left': -90, 'slight left': -35 }[m.mod];
+  return { g: '↑', r: rot == null ? 0 : rot };
+}
+const isMinor = m => (m.type === 'new name' || m.type === 'continue') && (!m.mod || m.mod === 'straight');
+
+/* voice */
+let speakId = 0, speaking = false, pendingSay = null;
+function unlockSpeech() {
+  try { if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; window.speechSynthesis.speak(u); } } catch (e) {}
+}
+function doSay(text) {
+  const id = ++speakId, u = new SpeechSynthesisUtterance(text);
+  u.lang = navigator.language || 'en-US';
+  const done = () => { if (id !== speakId) return; speaking = false; if (pendingSay) { const t = pendingSay; pendingSay = null; doSay(t); } };
+  u.onend = done; u.onerror = done; speaking = true;
+  window.speechSynthesis.speak(u);
+}
+function say(text, urgent) {
+  if (!S.voice || !('speechSynthesis' in window)) return;
+  try {
+    if (speaking) {
+      if (urgent) { speakId++; window.speechSynthesis.cancel(); speaking = false; pendingSay = null; doSay(text); }
+      else pendingSay = text;
+      return;
+    }
+    doSay(text);
+  } catch (e) {}
+}
+function setVoice(on) {
+  S.voice = on; store.set('cruise_voice', on ? '1' : '0');
+  $('#navMute').textContent = on ? 'Voice on' : 'Muted';
+  if (!on) { try { speakId++; window.speechSynthesis.cancel(); speaking = false; pendingSay = null; } catch (e) {} }
+}
+
+/* geometry helpers */
+function segProject(lat, lng, a, b) {
+  const kx = 111320 * Math.cos(rad(lat)), ky = 110540;
+  const ax = (a[1] - lng) * kx, ay = (a[0] - lat) * ky, bx = (b[1] - lng) * kx, by = (b[0] - lat) * ky;
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  let t = l2 ? (-ax * dx - ay * dy) / l2 : 0; t = Math.max(0, Math.min(1, t));
+  return { t, off: Math.hypot(ax + t * dx, ay + t * dy) };
+}
+function cumOf(coords) { const c = [0]; for (let i = 1; i < coords.length; i++) c.push(c[i - 1] + hav(coords[i - 1][0], coords[i - 1][1], coords[i][0], coords[i][1])); return c; }
+function advanceIdx(route, r, meters) { let k = r; while (k < route.coords.length - 1 && route.cum[k] - route.cum[r] < meters) k++; return k; }
+
+function stepsToMan(steps, coords, from, to, o) {
+  const out = []; let cur = from;
+  (steps || []).forEach(st => {
+    const t = st.t;
+    if (t === 'arrive' || t === 'notification' || t === 'exit roundabout' || t === 'exit rotary') return;
+    if (t === 'depart' && !o.depart) return;
+    let best = cur, bd = Infinity;
+    for (let k = cur; k <= to; k++) { const d = hav(coords[k][0], coords[k][1], st.la, st.ln); if (d < bd) { bd = d; best = k; } }
+    cur = best;
+    out.push({ idx: best, type: t, mod: st.m, name: st.n, exit: st.x, b: st.b });
+  });
+  return out;
+}
+
+function buildRoute() {
+  const pts = S.points; if (pts.length < 2) return null;
+  const coords = [], man = [], segs = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const seg = segCoords(i), startIdx = coords.length ? coords.length - 1 : 0;
+    for (let k = coords.length ? 1 : 0; k < seg.length; k++) coords.push(seg[k]);
+    const endIdx = coords.length - 1, steps = S.steps[i];
+    segs.push({ startIdx, endIdx, steps });
+    stepsToMan(steps, coords, startIdx, endIdx, { depart: i === 0 }).forEach(m => man.push(m));
+    const dest = pts[i + 1], last = i === pts.length - 2;
+    if (dest.stop || last) man.push({ idx: endIdx, type: 'arrive', isStop: !!dest.stop, last, stopName: dest.name || '', stopNo: pts.slice(0, i + 2).filter(p => p.stop).length });
+  }
+  const cum = cumOf(coords);
+  let dur = 0;
+  segs.forEach(sg => { dur += sg.steps && sg.steps.length ? sg.steps.reduce((t, s) => t + (s.u || 0), 0) : (cum[sg.endIdx] - cum[sg.startIdx]) / 13.9; });
+  man.forEach(m => { m.ms = cum[m.idx]; });
+  return { coords, cum, man, total: cum[cum.length - 1] || 1, dur };
+}
+function nearestOnRoute(route, lat, lng) {
+  let best = { off: Infinity, i: 0, s: 0 };
+  for (let i = 0; i < route.coords.length - 1; i++) {
+    const p = segProject(lat, lng, route.coords[i], route.coords[i + 1]);
+    if (p.off < best.off) best = { off: p.off, i, s: route.cum[i] + p.t * (route.cum[i + 1] - route.cum[i]) };
+  }
+  return best;
+}
+function compose(route, approach, startIdx) {
+  let coords, offset; const man = [];
+  if (approach) {
+    coords = approach.coords.slice(); approach.man.forEach(m => man.push({ ...m }));
+    offset = coords.length - startIdx;
+    for (let k = startIdx; k < route.coords.length; k++) coords.push(route.coords[k]);
+  } else { offset = -startIdx; coords = route.coords.slice(startIdx); }
+  route.man.forEach(m => { if (m.idx >= startIdx) man.push({ ...m, idx: m.idx + offset }); });
+  const cum = cumOf(coords);
+  man.forEach(m => { m.ms = cum[m.idx]; m.a1 = m.a2 = m.a3 = false; });
+  Object.assign(NAV, { route, coords, cum, man, total: cum[cum.length - 1] || 1, offset, startIdx, mi: 0, lastIdx: 0, s: 0, offCount: 0,
+    dur: (approach ? approach.dur : 0) + route.dur * Math.max(0, (route.total - route.cum[startIdx]) / route.total) });
+}
+async function fetchLeg(a, b) {
+  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const url = CFG.osrmUrl + '/route/v1/driving/' + a.lng + ',' + a.lat + ';' + b.lng + ',' + b.lat + '?overview=full&geometries=polyline&steps=true';
+    const r = await fetch(url, { signal: ctl.signal }), d = await r.json();
+    if (d.code !== 'Ok' || !d.routes || !d.routes[0]) throw new Error('no route');
+    const rt = d.routes[0], coords = decodePoly(rt.geometry), steps = compactSteps(rt.legs && rt.legs[0] && rt.legs[0].steps);
+    return { coords, man: stepsToMan(steps, coords, 0, coords.length - 1, { depart: true }), dur: steps.reduce((t, s) => t + (s.u || 0), 0) };
+  } finally { clearTimeout(to); }
+}
+
+function projectNav(lat, lng) {
+  const c = NAV.coords, cum = NAV.cum;
+  const i0 = Math.max(0, NAV.lastIdx - 2), limit = cum[Math.min(NAV.lastIdx, c.length - 1)] + 4000;
+  let best = { off: Infinity, s: cum[i0] || 0, idx: i0 };
+  for (let i = i0; i < c.length - 1; i++) {
+    if (cum[i] > limit && i > i0 + 30) break;
+    const p = segProject(lat, lng, c[i], c[i + 1]);
+    if (p.off < best.off) best = { off: p.off, s: cum[i] + p.t * (cum[i + 1] - cum[i]), idx: i };
+  }
+  return best;
+}
+
+function navHud() {
+  if (!NAV.man || !NAV.man.length) return;
+  const m = NAV.man[Math.min(NAV.mi, NAV.man.length - 1)], d = Math.max(0, m.ms - NAV.s);
+  const ic = manIcon(m);
+  $('#navGlyph').textContent = ic.g; $('#navGlyph').style.transform = 'rotate(' + ic.r + 'deg)';
+  $('#navDist').textContent = fmtNavDist(d);
+  $('#navInstr').textContent = manText(m);
+  const n = NAV.man[NAV.mi + 1];
+  $('#navThen').textContent = n && n.ms - m.ms < 400 ? 'Then ' + lcFirst(manText(n)) : '';
+  const rem = Math.max(0, NAV.total - NAV.s), t = NAV.dur * (rem / NAV.total);
+  $('#navTime').textContent = fmtTime(t);
+  let eta = ''; try { eta = new Date(Date.now() + t * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch (e) {}
+  $('#navMeta').textContent = fmtNavDist(rem) + (eta ? ' · ' + eta : '');
+}
+/* follow-me: always on while you're driving (navigating, or moving at speed). No switch. */
+const FOL = { drivingUntil: 0, userZoomed: false, busy: false, last: null };
+const isDriving = () => NAV.on || Date.now() < FOL.drivingUntil;
+function updateFollowUI() { $('#locate').classList.toggle('active', isDriving()); }
+function followMe(lat, lng, speed) {
+  if (!map || !isDriving()) return;
+  const kmh = (speed || 0) * 3.6;
+  const z = FOL.userZoomed ? map.getZoom() : (NAV.on ? (kmh < 25 ? 18 : kmh < 70 ? 17 : 16) : Math.max(map.getZoom(), 16));
+  let target = [lat, lng];
+  if (NAV.on) {   // sit the car in the lower part of the screen so you see the road ahead
+    const size = map.getSize(), p = map.project([lat, lng], z), ll = map.unproject({ x: p.x, y: p.y - size.y * 0.14 }, z);
+    target = [ll.lat, ll.lng];
+  }
+  const cur = map.getCenter ? map.getCenter() : null;
+  if (FOL.last && Math.abs(FOL.last.z - z) < 0.01 && (!cur || hav(cur.lat, cur.lng, target[0], target[1]) < 2)) return;
+  FOL.last = { lat: target[0], lng: target[1], z };
+  FOL.busy = true; map.setView(target, z, { animate: true, duration: .8 });
+  setTimeout(() => { FOL.busy = false; }, 1000);
+}
+function followTick(lat, lng, speed) {   // called on every GPS fix
+  if (speed != null && speed > 5) FOL.drivingUntil = Date.now() + 60000;   // moving at ~18 km/h or more = driving; stays on through a red light
+  updateFollowUI(); followMe(lat, lng, speed);
+}
+function navFix(lat, lng, speed) {
+  if (!NAV.on || !NAV.coords || NAV.finishing) return;
+  const pr = projectNav(lat, lng);
+  NAV.s = pr.s; NAV.lastIdx = pr.idx;
+  NAV.offCount = pr.off > 80 ? NAV.offCount + 1 : 0;
+  if (NAV.offCount >= 3 && !NAV.rerouting && Date.now() - NAV.lastReroute > 20000) reroute(lat, lng);
+  let m = NAV.man[NAV.mi];
+  while (m && NAV.s >= m.ms - (m.type === 'arrive' ? 25 : 15)) {
+    if (m.type === 'arrive' && !m.a3) { m.a3 = true; say(manText(m), true); }
+    NAV.mi++; m = NAV.man[NAV.mi];
+  }
+  if (!m) { NAV.finishing = true; navHud(); setTimeout(() => endNav(true), 6000); return; }
+  if (NAV.offCount < 2) {
+    const v = Math.max(0, speed || 0), d = m.ms - NAV.s, prev = NAV.mi > 0 ? NAV.man[NAV.mi - 1].ms : 0, gap = m.ms - prev;
+    const far = Math.max(500, v * 30), mid = Math.max(200, v * 12), near = Math.max(m.type === 'arrive' ? 60 : 45, v * 4), quiet = isMinor(m);
+    if (d <= near && !m.a3) { m.a3 = m.a2 = m.a1 = true; if (!quiet) say(manText(m), m.type !== 'depart'); }
+    else if (m.type === 'arrive') {
+      if (d <= Math.max(400, v * 20) && !m.a1 && gap > 600) { m.a1 = true; say('In ' + sayDist(d) + ', you will arrive at ' + (m.isStop ? (m.stopName || 'stop ' + m.stopNo) : 'the finish'), false); }
+    }
+    else if (!quiet && m.type !== 'depart') {
+      if (d <= mid && !m.a2 && gap > mid + 120) { m.a2 = m.a1 = true; say('In ' + sayDist(d) + ', ' + lcFirst(manText(m)), false); }
+      else if (d <= far && !m.a1 && gap > far + 150) { m.a1 = true; say('In ' + sayDist(d) + ', ' + lcFirst(manText(m)), false); }
+    }
+  }
+  navHud();
+}
+async function reroute(lat, lng) {
+  NAV.rerouting = true; NAV.lastReroute = Date.now();
+  say('Off route. Recalculating.', true); $('#navInstr').textContent = 'Recalculating…';
+  try {
+    const r = NAV.route, rCur = Math.max(NAV.startIdx, NAV.lastIdx - NAV.offset);
+    let best = rCur, bd = Infinity;
+    for (let k = Math.max(0, rCur - 3); k < r.coords.length; k++) { const d = hav(lat, lng, r.coords[k][0], r.coords[k][1]); if (d < bd) { bd = d; best = k; } }
+    const target = advanceIdx(r, best, 120);
+    const leg = await fetchLeg({ lat, lng }, { lat: r.coords[target][0], lng: r.coords[target][1] });
+    if (!NAV.on) return;
+    compose(r, leg, target); navHud();
+  } catch (e) { toast('Couldn’t recalculate. Follow the route line on the map.'); }
+  NAV.rerouting = false;
+}
+async function beginNav(route, announce, sig) {
+  const me = { lat: S.me.lat, lng: S.me.lng };
+  const near = nearestOnRoute(route, me.lat, me.lng);
+  let startIdx = near.i, approach = null;
+  if (near.off > 70) {
+    startIdx = near.off <= 600 ? advanceIdx(route, near.i, 120) : 0;
+    try { approach = await fetchLeg(me, { lat: route.coords[startIdx][0], lng: route.coords[startIdx][1] }); }
+    catch (e) { toast('Couldn’t get directions to the route. Follow the line on the map.'); }
+  }
+  compose(route, approach, startIdx);
+  NAV.sig = sig || (JSON.stringify(S.points.map(p => [p.lat, p.lng, p.stop ? 1 : 0])) + JSON.stringify(S.paths.map(p => p ? p.length : 0)));
+  NAV.on = true; NAV.finishing = false; NAV.rerouting = false; NAV.lastReroute = 0; FOL.userZoomed = false; FOL.last = null;
+  $('#cruise').classList.add('driving'); $('#navTop').hidden = false; $('#navBottom').hidden = false;
+  $('#sheet').classList.add('collapsed');
+  updateFollowUI(); if (S.me.has) followMe(S.me.lat, S.me.lng, S.me.sp);
+  setVoice(S.voice);
+  if (announce) say(approach ? 'Starting route. Head to the start point.' : 'Starting route.', true); else say('Route updated.', true);
+  const first = NAV.man[0];
+  if (announce && first && first.type === 'depart') { first.a1 = first.a2 = first.a3 = true; say(manText(first), false); }
+  navHud(); navFix(me.lat, me.lng, S.me.sp);
+}
+async function startNav() {
+  if (NAV.on) return;
+  const route = buildRoute();
+  if (!route) { toast('Draw a route first'); return; }
+  if (!S.me.has) { toast('Waiting for your GPS. Make sure location is allowed.'); return; }
+  unlockSpeech();
+  if (!S.steps.some(x => x && x.length)) toast('No turn directions on this route, so you’ll hear stop arrivals only.');
+  const b = $('#startNav'); b.disabled = true;
+  try { await beginNav(route, true); } finally { b.disabled = false; }
+}
+function endNav(arrived) {
+  if (!NAV.on) return;
+  NAV.on = false; NAV.finishing = false;
+  $('#cruise').classList.remove('driving'); $('#navTop').hidden = true; $('#navBottom').hidden = true; updateFollowUI();
+  try { if (!arrived) { speakId++; window.speechSynthesis.cancel(); speaking = false; pendingSay = null; } } catch (e) {}
+  updateTools();
+}
+async function refreshDirections() {
+  toast('Adding turn directions…');
+  for (let i = 0; i < S.points.length - 1; i++) {
+    if (!S.paths[i] || !S.steps[i]) { await snap(i); await new Promise(r => setTimeout(r, 300)); }
+  }
+}
+
 /* ---------- wiring ---------- */
 $('#startBtn').addEventListener('click', startCruise);
 $('#joinBtn').addEventListener('click', () => joinCruise());
@@ -776,7 +1091,7 @@ $('#undoBtn').addEventListener('click', () => { if (S.points.length) removePoint
 let clearArm = null;
 $('#clearBtn').addEventListener('click', e => {
   const b = e.currentTarget;
-  if (clearArm) { clearTimeout(clearArm); clearArm = null; b.textContent = 'Clear'; S.points = []; S.paths = []; S.sel = -1; changed(); return; }
+  if (clearArm) { clearTimeout(clearArm); clearArm = null; b.textContent = 'Clear'; S.points = []; S.paths = []; S.steps = []; S.sel = -1; changed(); return; }
   b.textContent = 'Sure?'; clearArm = setTimeout(() => { clearArm = null; b.textContent = 'Clear'; }, 3000);
 });
 $('#zin').addEventListener('click', () => map && map.zoomIn());
@@ -789,6 +1104,9 @@ $('#tabs').addEventListener('click', e => {
   if (b.classList.contains('on') && !sheet.classList.contains('collapsed')) { sheet.classList.add('collapsed'); return; }
   showTab(b.dataset.tab);
 });
+$('#startNav').addEventListener('click', startNav);
+$('#navEnd').addEventListener('click', () => endNav(false));
+$('#navMute').addEventListener('click', () => setVoice(!S.voice));
 $('#handle').addEventListener('click', () => $('#sheet').classList.toggle('collapsed'));
 $('#searchBtn').addEventListener('click', () => { $('#searchDrawer').classList.contains('open') ? closeSearch() : openSearch(); });
 $('#searchClose').addEventListener('click', closeSearch);

@@ -41,7 +41,7 @@ function load() {
 function save() {
   if (!DATA_FILE || !persistDirty) return;
   persistDirty = false;
-  const out = [...cruises.values()].map(({ code, name, adminKey, points, paths, info, updated }) => ({ code, name, adminKey, points, paths, info, updated }));
+  const out = [...cruises.values()].map(({ code, name, adminKey, points, paths, steps, info, updated }) => ({ code, name, adminKey, points, paths, steps, info, updated }));
   fs.writeFile(DATA_FILE, JSON.stringify(out), err => { if (err) console.error('save failed', err.message); });
 }
 
@@ -86,6 +86,25 @@ function cleanPaths(arr, nPoints) {
   }
   return out;
 }
+function cleanSteps(arr, nPoints) {
+  const want = Math.max(0, nPoints - 1), out = [];
+  for (let i = 0; i < want; i++) {
+    const seg = Array.isArray(arr) ? arr[i] : null;
+    if (!Array.isArray(seg)) { out.push(null); continue; }
+    out.push(seg.slice(0, 400).map(st => {
+      const la = num(st && st.la), ln = num(st && st.ln);
+      if (la == null || ln == null || Math.abs(la) > 90 || Math.abs(ln) > 180) return null;
+      const x = num(st.x), b = num(st.b);
+      return {
+        la: +la.toFixed(6), ln: +ln.toFixed(6), t: str(st.t, 24), m: str(st.m, 24), n: str(st.n, 60),
+        d: Math.max(0, Math.round(num(st.d) || 0)), u: Math.max(0, Math.round(num(st.u) || 0)),
+        x: x != null ? Math.max(0, Math.min(20, Math.round(x))) : null,
+        b: b != null ? ((Math.round(b) % 360) + 360) % 360 : null
+      };
+    }).filter(Boolean));
+  }
+  return out;
+}
 const emptyInfo = () => ({ date: '', meet: '', end: '', notes: '' });
 function cleanInfo(b) {
   b = b && typeof b === 'object' ? b : {};
@@ -96,7 +115,7 @@ function cleanInfo(b) {
     notes: (typeof b.notes === 'string' ? b.notes : '').replace(/[\u0000-\u0009\u000b-\u001f]/g, '').slice(0, 1000)
   };
 }
-const publicState = c => ({ code: c.code, name: c.name, points: c.points, paths: c.paths, info: c.info || emptyInfo() });
+const publicState = c => ({ code: c.code, name: c.name, points: c.points, paths: c.paths, steps: c.steps || [], info: c.info || emptyInfo() });
 const carsList = c => [...c.cars.values()].map(({ id, name, color, lat, lng, hd, sp, t }) => ({ id, name, color, lat, lng, hd, sp, t }));
 const photosMeta = c => c.photos.map(({ id, by, name, t, lat, lng }) => ({ id, by, name, t, lat, lng }));
 function decodeJpeg(dataUrl, max) {
@@ -123,7 +142,7 @@ async function api(req, res, url) {
     const code = genCode();
     const c = {
       code, name: str(b.name, 40) || 'Sunday cruise', adminKey: crypto.randomBytes(16).toString('hex'),
-      points: [], paths: [], updated: Date.now(), cars: new Map(), clients: new Set(), carsDirty: false,
+      points: [], paths: [], steps: [], updated: Date.now(), cars: new Map(), clients: new Set(), carsDirty: false,
       photos: [], photoBytes: 0, info: emptyInfo()
     };
     cruises.set(code, c); persistDirty = true;
@@ -139,9 +158,9 @@ async function api(req, res, url) {
 
   if (!m[2] && req.method === 'PUT') {
     if (!sameKey(req.headers['x-admin-key'], c.adminKey)) return send(res, 403, { error: 'not the organiser' });
-    const b = await readBody(req);
+    const b = await readBody(req, 3_000_000);
     if (b.name !== undefined) c.name = str(b.name, 40) || c.name;
-    if (b.points !== undefined) { c.points = cleanPoints(b.points); c.paths = cleanPaths(b.paths, c.points.length); }
+    if (b.points !== undefined) { c.points = cleanPoints(b.points); c.paths = cleanPaths(b.paths, c.points.length); c.steps = cleanSteps(b.steps, c.points.length); }
     if (b.info !== undefined) c.info = cleanInfo(b.info);
     touch(c);
     const state = publicState(c);

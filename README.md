@@ -47,7 +47,8 @@ It then opens full screen like a normal app.
 - `tileUrl`: map tiles. OpenStreetMap's own server is fine for testing and small groups; for a
   busy public app use a provider with a key (MapTiler, Stadia, Thunderforest) and paste its URL.
 - `geocodeUrl`: place search (Nominatim-style). The public server is for light use only.
-- `osrmUrl`: road snapping. The public demo server is for light use; host your own OSRM or use an
+- `units`: `auto`, `metric` or `imperial` for voice and distances.
+- `osrmUrl`: road snapping and turn directions. The public demo server is for light use; host your own OSRM or use an
   OSRM-compatible service for heavy use. Turn "Roads" off in the app to draw straight lines.
 
 ## How it works
@@ -56,6 +57,19 @@ It then opens full screen like a normal app.
 - `public/app.js`: the app (Leaflet map, route drawing, live cars, wake lock).
 - **Place search**: the magnifier button opens a side drawer. Search for a place (cafe, beach, address),
   tap a result to see it on the map, and the organiser can add it as a stop or a route point.
+- **Start route (voice guidance)**: anyone can press **Start route** to drive the route. It speaks turn
+  instructions like a maps app ("In 500 metres, turn left onto Beach Road"), announces stops and the finish,
+  shows the next turn, distance left and arrival time, follows you on the map, and recalculates if you leave
+  the route. If you're away from the route it first guides you to the start. **Muted** turns the voice off.
+  Turn directions come from the road-snapping service, so the organiser needs **Roads: On** when drawing.
+  For a route drawn earlier, the organiser taps **Add turn directions for voice guidance** in the Route tab.
+  Units follow the phone (miles in the US, otherwise km); set `units` in `public/config.js` to force one.
+  Set it up before you drive, use a phone mount, and keep the phone volume up (voice plays like any other
+  audio, so it normally comes through the car speakers if the phone is connected by Bluetooth or cable).
+- **Always follows you while driving**: when you start a route, or whenever you're moving at about 18 km/h
+  or faster, the map keeps your car centred (lower on screen during a route, so you see the road ahead).
+  There's no switch for it. It stays on through traffic lights and stops about a minute after you stop
+  moving, so you can pan the map freely when you're parked. Pinch to zoom and it keeps your zoom level.
 - **Info**: the organiser sets the date, meet time, end time and details (parking, rules, what to bring).
   Everyone sees it live, and people who join a cruise with details set land on it first. Times are shown
   as entered (local time), so they suit a cruise where everyone is in the same area.
