@@ -34,6 +34,21 @@ Notes:
 - Run a single instance. Live state is in that one process.
 - Free hosting tiers often sleep when idle, so the first open can take ~30 seconds.
 
+## Running a big cruise (100+ cars)
+
+Live updates are compact (only cars that moved are sent, and parked phones check in less often), so a
+phone downloads roughly 2 KB/s with 120 cars. Simulated tests with 250 cars ran smoothly on one small
+server. For a big event:
+
+- Use a paid host plan on the day. Free plans sleep when idle and have very little CPU.
+- Don't rely on OpenStreetMap's free tile server for a crowd. Get a key from a tile provider (MapTiler,
+  Stadia, Thunderforest) and put its URL in `public/config.js` (`tileUrl`).
+- Road snapping and "get me to the route" use a free public routing server meant for light use. Drawing
+  the route is fine. If many people far from the route press Start at once, host your own OSRM or use an
+  OSRM-compatible service and set `osrmUrl`.
+- Name tags on other drivers hide when the map is zoomed out, so a large convoy stays readable.
+- Do a test run with a handful of people first.
+
 ## Install on a phone
 
 Open the site, then:
@@ -42,9 +57,19 @@ Open the site, then:
 
 It then opens full screen like a normal app.
 
+## The map
+
+The main map is OpenFreeMap (free, no key or account, drawn by the phone with MapLibre). It has no
+uptime guarantee, so the app watches it: if the map code can't run on a phone, or the map doesn't load
+within about 12 seconds, or tiles keep failing, it switches to a plain raster map (`tileUrl` in
+`public/config.js`, OpenStreetMap by default) and shows "Using the backup map". For a stronger backup, paste
+a Stadia or MapTiler tile URL into `tileUrl`. MapLibre and its Leaflet plugin load from a CDN at pinned
+versions (see `public/index.html`).
+
 ## Settings (public/config.js)
 
-- `tileUrl`: map tiles. OpenStreetMap's own server is fine for testing and small groups; for a
+- `vectorStyle`: the main OpenFreeMap style (set it to empty to always use the raster map).
+- `tileUrl`: the backup raster map. OpenStreetMap's own server is fine for testing and small groups; for a
   busy public app use a provider with a key (MapTiler, Stadia, Thunderforest) and paste its URL.
 - `geocodeUrl`: place search (Nominatim-style). The public server is for light use only.
 - `units`: `auto`, `metric` or `imperial` for voice and distances.

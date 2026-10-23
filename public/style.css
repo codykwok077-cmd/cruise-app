@@ -8,7 +8,7 @@
 }
 @media (prefers-color-scheme:dark){
   :root{--bg:#0d1014;--surface:#171b21;--ink:#f2f4f7;--muted:#9aa3b0;--line:#2a313a;--accent:#ff6a4d;--shadow:0 8px 28px rgba(0,0,0,.5)}
-  .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.9)}
+  .leaflet-tile-pane,.maplibregl-canvas{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.9)}
 }
 html{height:100%}
 *,*::before,*::after{box-sizing:border-box}
@@ -195,3 +195,6 @@ textarea:focus{border-color:var(--accent)}
 
 /* follow */
 .mapctl .pill.active{background:var(--accent);color:#fff;border-color:transparent}
+
+/* big groups: hide other drivers' name tags when zoomed out */
+.labels-off .carwrap:not(.me) .lab{display:none}

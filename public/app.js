@@ -6,7 +6,11 @@ const CFG = Object.assign({
   tileAttribution: '&copy; OpenStreetMap contributors',
   osrmUrl: 'https://router.project-osrm.org',
   geocodeUrl: 'https://nominatim.openstreetmap.org/search',
-  units: 'auto'   // 'auto' (miles in the US, otherwise km), 'metric' or 'imperial'
+  units: 'auto',   // 'auto' (miles in the US, otherwise km), 'metric' or 'imperial'
+  // Main map: OpenFreeMap (free, no key). If it can't load, the app switches to the raster map above.
+  vectorStyle: 'https://tiles.openfreemap.org/styles/liberty',
+  vectorAttribution: '<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
+  vectorLoadTimeoutMs: 12000
 }, window.CRUISE_CONFIG || {});
 
 /* ---------- helpers ---------- */
@@ -87,10 +91,38 @@ const S = {
 let map, routeCasing, routeLine, pointLayer, carLayer, photoLayer, searchMarker = null, myEntry = null;
 const carEntries = new Map();
 
+function webglOK() {
+  try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch (e) { return false; }
+}
+function addRasterBase(m) { return L.tileLayer(CFG.tileUrl, { maxZoom: 19, attribution: CFG.tileAttribution }).addTo(m); }
+// OpenFreeMap vector map first; if the plugin, WebGL or the tiles fail, fall back to the raster map.
+function addBaseMap(m) {
+  if (!CFG.vectorStyle || !L.maplibreGL || !window.maplibregl || !webglOK()) { addRasterBase(m); return 'raster'; }
+  let gl = null, switched = false;
+  const toRaster = () => {
+    if (switched) return; switched = true;
+    try { if (gl) m.removeLayer(gl); } catch (e) {}
+    addRasterBase(m); toast('Using the backup map');
+  };
+  try {
+    gl = L.maplibreGL({ style: CFG.vectorStyle, attribution: CFG.vectorAttribution }).addTo(m);
+    const ml = gl.getMaplibreMap && gl.getMaplibreMap();
+    if (!ml) { toRaster(); return 'raster'; }
+    let loaded = false; const errTimes = [];
+    ml.on('load', () => { loaded = true; });
+    ml.on('error', () => {
+      const now = Date.now(); errTimes.push(now);
+      while (errTimes.length && now - errTimes[0] > 20000) errTimes.shift();
+      if ((!loaded && errTimes.length >= 3) || errTimes.length >= 40) toRaster();
+    });
+    setTimeout(() => { if (!loaded) toRaster(); }, CFG.vectorLoadTimeoutMs || 12000);
+    return 'vector';
+  } catch (e) { toRaster(); return 'raster'; }
+}
 function initMap() {
   if (map) { setTimeout(() => map.invalidateSize(), 50); return; }
-  map = L.map('map', { zoomControl: false, worldCopyJump: true }).setView([20, 0], 2);
-  L.tileLayer(CFG.tileUrl, { maxZoom: 19, attribution: CFG.tileAttribution }).addTo(map);
+  map = L.map('map', { zoomControl: false, minZoom: 2, maxZoom: 19 }).setView([20, 0], 2);
+  addBaseMap(map);
   map.attributionControl.setPrefix(false);
   routeCasing = L.polyline([], { color: '#fff', weight: 11, opacity: .95, lineJoin: 'round', lineCap: 'round', interactive: false }).addTo(map);
   routeLine = L.polyline([], { color: '#ff4d2e', weight: 5, lineJoin: 'round', lineCap: 'round', interactive: false }).addTo(map);
@@ -99,6 +131,8 @@ function initMap() {
   carLayer = L.layerGroup().addTo(map);
   map.on('click', onMapClick);
   map.on('zoomstart', () => { if (!FOL.busy) FOL.userZoomed = true; });
+  const labels = () => $('#map').classList.toggle('labels-off', map.getZoom() < 15);
+  map.on('zoomend', labels); labels();
   window.addEventListener('resize', () => map.invalidateSize());
 }
 
@@ -457,6 +491,21 @@ function onState(st) {
   if (NAV.on && NAV.sig && sig !== NAV.sig) { toast('The organiser changed the route'); const rt = buildRoute(); if (rt) beginNav(rt, false, sig); else endNav(false); }
   if (S.points.length && !S.fitted) { S.fitted = true; fitAll(); }
 }
+function onCarDelta(d) {
+  const now = Date.now();
+  (d.g || []).forEach(id => S.cars.delete(id));
+  Object.keys(d.m || {}).forEach(id => {
+    const car = S.cars.get(id) || { id, lat: null, lng: null, hd: null, sp: null };
+    car.name = String(d.m[id][0] || 'Driver').slice(0, 20); car.color = /^#[0-9a-f]{6}$/i.test(d.m[id][1]) ? d.m[id][1] : '#475569';
+    S.cars.set(id, car);
+  });
+  (d.u || []).forEach(r => {
+    const car = S.cars.get(r[0]) || { id: r[0], name: 'Driver', color: '#475569' };
+    car.lat = r[1]; car.lng = r[2]; car.hd = r[3]; car.sp = r[4]; car.t = now;
+    S.cars.set(r[0], car);
+  });
+  syncCars(); updateChips(); renderPeople();
+}
 function onCars(list) {
   S.cars = new Map(list.map(c => [c.id, c]));
   syncCars(); updateChips(); renderPeople();
@@ -465,18 +514,20 @@ function connect() {
   const es = new EventSource('/api/cruises/' + S.code + '/events');
   es.addEventListener('state', e => onState(JSON.parse(e.data)));
   es.addEventListener('cars', e => onCars(JSON.parse(e.data)));
+  es.addEventListener('cd', e => onCarDelta(JSON.parse(e.data)));
   es.addEventListener('photos', e => onPhotos(JSON.parse(e.data)));
   es.onopen = () => { S.live = true; updateChips(); postPos(true); };
   es.onerror = () => { S.live = false; updateChips(); };
   S.es = es;
 }
-let lastPost = 0, postTimer = null;
+let lastPost = 0, postTimer = null, lastPosted = null;
 function postPos(force) {
   if (!S.code) return;
-  const now = Date.now(), wait = 2000 - (now - lastPost);
-  if (!force && wait > 0) { if (!postTimer) postTimer = setTimeout(() => { postTimer = null; postPos(true); }, wait); return; }
-  lastPost = now;
   const m = S.me;
+  const still = m.has && lastPosted && (m.sp == null || m.sp < 1) && hav(lastPosted.lat, lastPosted.lng, m.lat, m.lng) < 4;
+  const now = Date.now(), wait = (still ? 8000 : 2000) - (now - lastPost);   // parked cars only check in every few seconds
+  if (!force && wait > 0) { if (!postTimer) postTimer = setTimeout(() => { postTimer = null; postPos(true); }, wait); return; }
+  lastPost = now; if (m.has) lastPosted = { lat: m.lat, lng: m.lng };
   fetch('/api/cruises/' + S.code + '/pos', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
     body: JSON.stringify({ id: S.myId, name: S.nick, color: S.color, lat: m.has ? m.lat : null, lng: m.has ? m.lng : null, hd: m.hd, sp: m.sp })

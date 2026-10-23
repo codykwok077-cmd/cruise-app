@@ -34,7 +34,7 @@ function load() {
   if (!DATA_FILE) return;
   try {
     const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    for (const c of raw) cruises.set(c.code, { ...c, info: c.info || emptyInfo(), cars: new Map(), clients: new Set(), carsDirty: false, photos: [], photoBytes: 0 });
+    for (const c of raw) cruises.set(c.code, { ...c, info: c.info || emptyInfo(), cars: new Map(), clients: new Set(), carsDirty: false, changed: new Set(), metaDirty: new Set(), gone: [], photos: [], photoBytes: 0 });
     console.log('Loaded', cruises.size, 'cruises');
   } catch (e) { /* first run */ }
 }
@@ -126,7 +126,10 @@ function decodeJpeg(dataUrl, max) {
   if (buf[0] !== 0xff || buf[1] !== 0xd8 || buf[2] !== 0xff) return null;   // must really be a JPEG
   return buf;
 }
-function sse(res, event, data) { res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n'); }
+function sse(res, event, data) {
+  if (res.writableLength > 1_000_000) { res.destroy(); return; }   // a stuck or very slow phone must not pile up memory
+  res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n');
+}
 function touch(c) { c.updated = Date.now(); persistDirty = true; }
 function sameKey(a, b) {
   const A = Buffer.from(String(a || '')), B = Buffer.from(String(b || ''));
@@ -142,7 +145,7 @@ async function api(req, res, url) {
     const code = genCode();
     const c = {
       code, name: str(b.name, 40) || 'Sunday cruise', adminKey: crypto.randomBytes(16).toString('hex'),
-      points: [], paths: [], steps: [], updated: Date.now(), cars: new Map(), clients: new Set(), carsDirty: false,
+      points: [], paths: [], steps: [], updated: Date.now(), cars: new Map(), clients: new Set(), carsDirty: false, changed: new Set(), metaDirty: new Set(), gone: [],
       photos: [], photoBytes: 0, info: emptyInfo()
     };
     cruises.set(code, c); persistDirty = true;
@@ -174,13 +177,11 @@ async function api(req, res, url) {
     if (!id) return send(res, 400, { error: 'id required' });
     const lat = num(b.lat), lng = num(b.lng);
     const ok = lat != null && lng != null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
-    c.cars.set(id, {
-      id, name: str(b.name, 20) || 'Driver',
-      color: /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : '#475569',
-      lat: ok ? lat : null, lng: ok ? lng : null,
-      hd: num(b.hd), sp: num(b.sp), t: Date.now()
-    });
-    c.carsDirty = true; c.updated = Date.now();
+    const name = str(b.name, 20) || 'Driver', color = /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : '#475569';
+    const prev = c.cars.get(id);
+    if (!prev || prev.name !== name || prev.color !== color) c.metaDirty.add(id);
+    c.cars.set(id, { id, name, color, lat: ok ? lat : null, lng: ok ? lng : null, hd: num(b.hd), sp: num(b.sp), t: Date.now() });
+    c.changed.add(id); c.updated = Date.now();
     return send(res, 204, null);
   }
 
@@ -272,9 +273,19 @@ const server = http.createServer(async (req, res) => {
 setInterval(() => {                       // push car positions once a second
   const now = Date.now();
   for (const c of cruises.values()) {
-    for (const [id, car] of c.cars) if (now - car.t > CAR_TTL) { c.cars.delete(id); c.carsDirty = true; }
-    if (c.carsDirty && c.clients.size) { const list = carsList(c); for (const r of c.clients) sse(r, 'cars', list); }
-    c.carsDirty = false;
+    for (const [id, car] of c.cars) if (now - car.t > CAR_TTL) { c.cars.delete(id); c.gone.push(id); c.changed.delete(id); }
+    if (c.clients.size && (c.changed.size || c.gone.length)) {
+      // compact delta: [id, lat, lng, heading, speed] for cars that moved; names/colours only when new or changed
+      const u = [], m = {};
+      for (const id of c.changed) {
+        const car = c.cars.get(id); if (!car) continue;
+        u.push([id, car.lat == null ? null : +car.lat.toFixed(5), car.lng == null ? null : +car.lng.toFixed(5), car.hd == null ? null : Math.round(car.hd), car.sp == null ? null : +car.sp.toFixed(1)]);
+        if (c.metaDirty.has(id)) m[id] = [car.name, car.color];
+      }
+      const msg = { u, m, g: c.gone };
+      for (const r of c.clients) sse(r, 'cd', msg);
+    }
+    c.changed.clear(); c.metaDirty.clear(); c.gone = [];
   }
 }, 1000);
 setInterval(() => { for (const c of cruises.values()) for (const r of c.clients) r.write(': ping\n\n'); }, 25000);
