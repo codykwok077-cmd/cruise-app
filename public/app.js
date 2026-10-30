@@ -265,7 +265,7 @@ function onMapClick(e) {
 
 /* ---------- saving ---------- */
 let saveT = null, saving = false, pendingSave = false;
-function changed() { drawRoute(); renderRoute(); updateTools(); scheduleSave(); }
+function changed() { drawRoute(); renderRoute(); updateTools(); scheduleSave(); scheduleRecent(); }
 function scheduleSave() { if (!S.isOrg || !S.code) return; clearTimeout(saveT); saveT = setTimeout(flushSave, 500); }
 async function flushSave() {
   if (saving) { pendingSave = true; return; }
@@ -331,7 +331,7 @@ function renderRoute() {
 }
 
 function carList() {
-  const list = [{ id: S.myId, name: S.nick, color: S.color, isMe: true, lat: S.me.lat, lng: S.me.lng, has: S.me.has, sp: S.me.sp, t: Date.now() }];
+  const list = [{ id: S.myId, name: S.nick, color: S.color, car: S.car, isMe: true, lat: S.me.lat, lng: S.me.lng, has: S.me.has, sp: S.me.sp, t: Date.now() }];
   S.cars.forEach(c => { if (c.id !== S.myId) list.push({ ...c, has: c.lat != null }); });
   S.demoCars.forEach(c => list.push({ ...c, has: true, demo: true }));
   return list;
@@ -348,11 +348,12 @@ function renderPeople() {
     if (c.demo) sub += ' · demo';
     const row = h('div', { class: 'item' },
       h('span', { class: 'badge', style: 'background:' + c.color, text: (c.name || '?').charAt(0).toUpperCase() }),
-      h('div', { class: 'grow' }, h('b', { text: c.isMe ? c.name + ' (you)' : c.name }), h('small', { text: sub })));
+      h('div', { class: 'grow' }, h('b', { text: c.isMe ? c.name + ' (you)' : c.name }), h('small', { text: (c.car ? c.car + ' · ' : '') + sub })));
     if (c.has) row.append(h('button', { class: 'mini', 'aria-label': 'Show on map', text: '⌖', onclick: () => flyTo(c.lat, c.lng, 15) }));
     el.append(row);
   });
   if (list.length === 1) el.append(h('p', { class: 'empty', text: 'Just you so far. Share the link and cars will appear here as people join.' }));
+  el.append(h('button', { class: 'outline', onclick: openProfile, text: 'Edit my profile' }));
   if (S.isOrg && S.points.length > 1) el.append(h('button', { class: 'outline', onclick: toggleDemo, text: S.demo ? 'Stop demo cars' : 'Preview with demo cars' }));
 }
 
@@ -422,8 +423,10 @@ $('#awakeChip').addEventListener('click', () => {
 function makeCarEntry(lat, lng) {
   const lab = h('div', { class: 'lab' }), arr = h('div', { class: 'arr' }), dot = h('div', { class: 'cdot' });
   const el = h('div', { class: 'carwrap' }, lab, arr, dot);
-  const marker = L.marker([lat, lng], { icon: L.divIcon({ className: 'car', html: el, iconSize: [0, 0] }), interactive: false, keyboard: false, zIndexOffset: 800 }).addTo(carLayer);
-  return { marker, el, lab, arr, dot };
+  const pop = h('div', { class: 'cpop' }, h('b'), h('span', { class: 'ccar' }), h('small'));
+  const marker = L.marker([lat, lng], { icon: L.divIcon({ className: 'car', html: el, iconSize: [0, 0] }), interactive: true, keyboard: false, zIndexOffset: 800 }).addTo(carLayer);
+  marker.bindPopup(pop, { closeButton: false, autoPan: false, offset: [0, -16] });
+  return { marker, el, lab, arr, dot, pop };
 }
 function updateCarEntry(e, c, isMe) {
   e.lab.textContent = isMe ? 'You' : c.name;
@@ -432,6 +435,9 @@ function updateCarEntry(e, c, isMe) {
   e.arr.style.display = c.hd == null ? 'none' : 'block';
   if (c.hd != null) e.arr.style.transform = 'rotate(' + c.hd + 'deg)';
   e.el.classList.toggle('me', !!isMe);
+  e.pop.children[0].textContent = isMe ? c.name + ' (you)' : c.name;
+  e.pop.children[1].textContent = c.car || '';
+  e.pop.children[2].textContent = c.sp != null && c.sp >= 1 ? Math.round(c.sp * 3.6) + ' km/h' : '';
   e.marker.setLatLng([c.lat, c.lng]);
 }
 function syncCars() {
@@ -443,7 +449,7 @@ function syncCars() {
   want.forEach((c, id) => { let e = carEntries.get(id); if (!e) { e = makeCarEntry(c.lat, c.lng); carEntries.set(id, e); } updateCarEntry(e, c, false); });
   if (S.me.has) {
     if (!myEntry) myEntry = makeCarEntry(S.me.lat, S.me.lng);
-    updateCarEntry(myEntry, { name: S.nick, color: S.color, lat: S.me.lat, lng: S.me.lng, hd: S.me.hd }, true);
+    updateCarEntry(myEntry, { name: S.nick, color: S.color, car: S.car, sp: S.me.sp, lat: S.me.lat, lng: S.me.lng, hd: S.me.hd }, true);
   }
 }
 function clearCars() {
@@ -457,7 +463,7 @@ function toggleDemo() {
   S.demo = !S.demo;
   clearInterval(demoT);
   if (S.demo) {
-    S.demoCars = ['Mia', 'Jack', 'Priya', 'Leo'].map((n, i) => ({ id: 'demo' + i, name: n, color: COLORS[(i + 1) % COLORS.length], sp: 14 + i * 2.5, off: i * 80, lat: 0, lng: 0, hd: null }));
+    S.demoCars = ['Mia', 'Jack', 'Priya', 'Leo'].map((n, i) => ({ id: 'demo' + i, name: n, car: ['Mazda MX-5', 'Ford Ranger', 'VW Golf GTI', 'Toyota 86'][i], color: COLORS[(i + 1) % COLORS.length], sp: 14 + i * 2.5, off: i * 80, lat: 0, lng: 0, hd: null }));
     const tick = () => {
       const coords = routeCoords(); if (coords.length < 2) return;
       const cum = [0]; for (let k = 1; k < coords.length; k++) cum.push(cum[k - 1] + hav(coords[k - 1][0], coords[k - 1][1], coords[k][0], coords[k][1]));
@@ -486,7 +492,7 @@ function onState(st) {
   S.loaded = true;
   renderInfo();
   if (first && !S.isOrg && hasInfo(S.info)) showTab('Info');
-  drawRoute(); renderRoute(); updateTools(); updateChips();
+  drawRoute(); renderRoute(); updateTools(); updateChips(); scheduleRecent();
   const sig = JSON.stringify(S.points.map(p => [p.lat, p.lng, p.stop ? 1 : 0])) + JSON.stringify(S.paths.map(p => p ? p.length : 0));
   if (NAV.on && NAV.sig && sig !== NAV.sig) { toast('The organiser changed the route'); const rt = buildRoute(); if (rt) beginNav(rt, false, sig); else endNav(false); }
   if (S.points.length && !S.fitted) { S.fitted = true; fitAll(); }
@@ -496,7 +502,7 @@ function onCarDelta(d) {
   (d.g || []).forEach(id => S.cars.delete(id));
   Object.keys(d.m || {}).forEach(id => {
     const car = S.cars.get(id) || { id, lat: null, lng: null, hd: null, sp: null };
-    car.name = String(d.m[id][0] || 'Driver').slice(0, 20); car.color = /^#[0-9a-f]{6}$/i.test(d.m[id][1]) ? d.m[id][1] : '#475569';
+    car.car = String(d.m[id][2] || '').slice(0, 40); car.name = String(d.m[id][0] || 'Driver').slice(0, 20); car.color = /^#[0-9a-f]{6}$/i.test(d.m[id][1]) ? d.m[id][1] : '#475569';
     S.cars.set(id, car);
   });
   (d.u || []).forEach(r => {
@@ -530,7 +536,7 @@ function postPos(force) {
   lastPost = now; if (m.has) lastPosted = { lat: m.lat, lng: m.lng };
   fetch('/api/cruises/' + S.code + '/pos', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
-    body: JSON.stringify({ id: S.myId, name: S.nick, color: S.color, lat: m.has ? m.lat : null, lng: m.has ? m.lng : null, hd: m.hd, sp: m.sp })
+    body: JSON.stringify({ id: S.myId, name: S.nick, color: S.color, car: S.car, lat: m.has ? m.lat : null, lng: m.has ? m.lng : null, hd: m.hd, sp: m.sp })
   }).catch(() => {});
 }
 setInterval(() => { if (S.active) { postPos(true); renderPeople(); } }, 10000);
@@ -583,6 +589,7 @@ function enterCruise() {
   connect(); startGeo(); acquireWake();
 }
 function leaveCruise() {
+  saveRecentNow();
   S.active = false;
   if (S.es) S.es.close(); S.es = null;
   if (S.watchId != null) navigator.geolocation.clearWatch(S.watchId); S.watchId = null;
@@ -594,17 +601,16 @@ function leaveCruise() {
   S.info = { date: '', meet: '', end: '', notes: '' }; S.photos = []; { const pt = document.querySelector('#tabs [data-tab="Photos"]'); if (pt) pt.textContent = 'Photos'; } closeSearch(); clearSearchMarker(); closeLightbox(); $('#searchResults').replaceChildren(); $('#searchInput').value = '';
   history.replaceState(null, '', '/');
   $('#cruise').hidden = true; $('#home').hidden = false; $('#locating').hidden = true;
+  renderRecent();
 }
-function readNick() {
-  const n = $('#nick').value.trim().slice(0, 20);
-  S.nick = n || 'Driver'; store.set('cruise_nick', n);
-  S.color = COLORS[hashStr(S.myId) % COLORS.length];
-}
-async function startCruise() {
-  homeMsg(''); readNick();
-  const name = $('#cname').value.trim().slice(0, 40) || 'Sunday cruise';
+async function startCruise(route) {
+  homeMsg(''); applyProfile();
+  const saved = route && Array.isArray(route.points) ? route : null;
+  const name = $('#cname').value.trim().slice(0, 40) || (saved ? String(saved.name || '').slice(0, 40) : '') || 'Sunday cruise';
+  const body = { name };
+  if (saved) { body.points = saved.points; body.paths = saved.paths; body.steps = saved.steps; }
   try {
-    const r = await fetch('/api/cruises', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    const r = await fetch('/api/cruises', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!r.ok) throw new Error();
     const d = await r.json();
     S.code = d.code; S.cname = d.name; S.adminKey = d.adminKey;
@@ -613,7 +619,7 @@ async function startCruise() {
   } catch (e) { homeMsg('Couldn’t reach the server. Check your connection and try again.'); }
 }
 async function joinCruise(codeIn) {
-  homeMsg(''); readNick();
+  homeMsg(''); applyProfile();
   const code = (codeIn || $('#joinCode').value).toLowerCase().replace(/[^a-z0-9]/g, '');
   if (code.length < 4) { homeMsg('Enter the cruise code.'); return; }
   try {
@@ -1131,8 +1137,94 @@ async function refreshDirections() {
   }
 }
 
+/* ---------- profile (name, car, colour) ---------- */
+const P = { name: '', car: '', color: null };
+function applyProfile() {
+  S.nick = P.name.trim().slice(0, 20) || 'Driver';
+  S.car = P.car.trim().slice(0, 40);
+  S.color = P.color || COLORS[hashStr(S.myId) % COLORS.length];
+}
+function loadProfile() {
+  try {
+    const p = JSON.parse(store.get('cruise_profile') || 'null');
+    if (p && typeof p === 'object') { P.name = String(p.name || '').slice(0, 20); P.car = String(p.car || '').slice(0, 40); P.color = /^#[0-9a-f]{6}$/i.test(p.color) ? p.color : null; }
+    else P.name = (store.get('cruise_nick') || '').slice(0, 20);
+  } catch (e) {}
+  applyProfile();
+}
+function renderProfileCard() {
+  $('#pfAvatar').textContent = (P.name.trim() || '?').charAt(0).toUpperCase();
+  $('#pfAvatar').style.background = S.color;
+  $('#pfName').textContent = P.name.trim() || 'Add your name';
+  $('#pfCar').textContent = P.car.trim() || 'Add your car';
+}
+function saveProfile() {
+  store.set('cruise_profile', JSON.stringify(P)); applyProfile(); renderProfileCard();
+  if (S.active) { syncCars(); renderPeople(); postPos(false); }
+}
+function renderSwatches() {
+  const box = $('#pfColors'); box.replaceChildren();
+  COLORS.forEach(c => box.append(h('button', { class: 'sw' + (S.color === c ? ' on' : ''), style: 'background:' + c, 'aria-label': 'Marker colour ' + c,
+    onclick: () => { P.color = c; saveProfile(); renderSwatches(); } })));
+}
+function openProfile() {
+  $('#pfNameIn').value = P.name; $('#pfCarIn').value = P.car; renderSwatches();
+  $('#profileModal').hidden = false; setTimeout(() => $('#pfNameIn').focus(), 60);
+}
+function closeProfile() { $('#profileModal').hidden = true; }
+
+/* ---------- recent routes (kept on this phone) ---------- */
+const RECENT_KEY = 'cruise_recent_v1';
+function loadRecent() {
+  try { const l = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); return Array.isArray(l) ? l.filter(r => r && Array.isArray(r.points) && r.points.length > 1 && r.sig) : []; }
+  catch (e) { return []; }
+}
+function storeRecent(list) {
+  const l = list.slice(0, 10);
+  for (;;) { try { localStorage.setItem(RECENT_KEY, JSON.stringify(l)); return; } catch (e) { if (!l.length) return; l.pop(); } }   // phone storage full: drop the oldest
+}
+const routeSig = pts => pts.map(p => [(+p.lat).toFixed(5), (+p.lng).toFixed(5), p.stop ? 1 : 0, p.name || ''].join(',')).join('|');
+let recentT = null;
+function scheduleRecent() { clearTimeout(recentT); recentT = setTimeout(saveRecentNow, 30000); }
+function saveRecentNow() {
+  clearTimeout(recentT);
+  if (!S.code || S.points.length < 2) return;
+  const sig = routeSig(S.points), list = loadRecent().filter(r => r.sig !== sig);
+  list.unshift({ sig, name: S.cname || 'Route', savedAt: Date.now(), points: S.points, paths: S.paths, steps: S.steps });
+  storeRecent(list);
+}
+function ago(ts) {
+  const m = Math.round((Date.now() - ts) / 60000);
+  if (m < 1) return 'just now'; if (m < 60) return m + ' min ago';
+  const hh = Math.round(m / 60); if (hh < 24) return hh + ' h ago';
+  const d = Math.round(hh / 24); return d + (d === 1 ? ' day ago' : ' days ago');
+}
+function routeLenOf(r) {
+  let t = 0;
+  for (let i = 0; i < r.points.length - 1; i++) {
+    const p = r.paths && r.paths[i];
+    const seg = p ? decode(p) : [[r.points[i].lat, r.points[i].lng], [r.points[i + 1].lat, r.points[i + 1].lng]];
+    for (let k = 1; k < seg.length; k++) t += hav(seg[k - 1][0], seg[k - 1][1], seg[k][0], seg[k][1]);
+  }
+  return t;
+}
+function renderRecent() {
+  const box = $('#recentBox'); box.replaceChildren();
+  const list = loadRecent(); box.hidden = !list.length;
+  if (!list.length) return;
+  box.append(h('div', { class: 'secthead', text: 'Recent routes' }));
+  list.forEach(r => {
+    const stops = r.points.filter(p => p.stop).length;
+    box.append(h('div', { class: 'item' },
+      h('div', { class: 'grow' }, h('b', { text: String(r.name || 'Route').slice(0, 40) }),
+        h('small', { text: fmtKm(routeLenOf(r)) + ' · ' + stops + (stops === 1 ? ' stop' : ' stops') + ' · ' + ago(r.savedAt) })),
+      h('button', { class: 'ghost sm', text: 'Use', onclick: () => startCruise(r) }),
+      h('button', { class: 'mini', 'aria-label': 'Delete saved route', text: '✕', onclick: () => { storeRecent(loadRecent().filter(x => x.sig !== r.sig)); renderRecent(); } })));
+  });
+}
+
 /* ---------- wiring ---------- */
-$('#startBtn').addEventListener('click', startCruise);
+$('#startBtn').addEventListener('click', () => startCruise());
 $('#joinBtn').addEventListener('click', () => joinCruise());
 $('#joinCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinCruise(); });
 $('#backBtn').addEventListener('click', leaveCruise);
@@ -1155,6 +1247,13 @@ $('#tabs').addEventListener('click', e => {
   if (b.classList.contains('on') && !sheet.classList.contains('collapsed')) { sheet.classList.add('collapsed'); return; }
   showTab(b.dataset.tab);
 });
+$('#profileCard').addEventListener('click', openProfile);
+$('#pfDone').addEventListener('click', closeProfile);
+$('#pfNameIn').addEventListener('input', e => { P.name = e.target.value.slice(0, 20); saveProfile(); });
+$('#pfCarIn').addEventListener('input', e => { P.car = e.target.value.slice(0, 40); saveProfile(); });
+$('#profileModal').addEventListener('click', e => { if (e.target.id === 'profileModal') closeProfile(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveRecentNow(); });
+window.addEventListener('pagehide', saveRecentNow);
 $('#startNav').addEventListener('click', startNav);
 $('#navEnd').addEventListener('click', () => endNav(false));
 $('#navMute').addEventListener('click', () => setVoice(!S.voice));
@@ -1180,8 +1279,7 @@ document.addEventListener('pointerdown', () => { if (S.active && S.wantAwake && 
 /* ---------- init ---------- */
 S.myId = store.get('cruise_uid');
 if (!S.myId) { S.myId = genId(); store.set('cruise_uid', S.myId); }
-S.nick = store.get('cruise_nick') || '';
-$('#nick').value = S.nick;
+loadProfile(); renderProfileCard(); renderRecent();
 const m = location.search.match(/[?&]c=([a-z0-9]{4,10})/i);
 if (m) { $('#joinCode').value = m[1].toUpperCase(); joinCruise(m[1]); }
 })();

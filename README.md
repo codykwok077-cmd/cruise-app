@@ -95,6 +95,14 @@ versions (see `public/index.html`).
   or faster, the map keeps your car centred (lower on screen during a route, so you see the road ahead).
   There's no switch for it. It stays on through traffic lights and stops about a minute after you stop
   moving, so you can pan the map freely when you're parked. Pinch to zoom and it keeps your zoom level.
+- **Profile**: tap your name card on the home screen to set your name, your car (for example "2019 Subaru
+  WRX") and your marker colour. Other drivers see your car in the People tab and when they tap your marker
+  on the map. There are no accounts: the profile is saved on that phone, so it has to be set up again on a
+  new phone or browser.
+- **Recent routes**: routes you organise or join are saved on your phone (the last 10, after you've left the
+  cruise or the route has been stable for about 30 seconds). On the home screen, **Use** starts a new cruise
+  with that route, including its turn directions. Delete one with the cross. They are not synced between
+  devices and are lost if you clear the browser's data.
 - **Info**: the organiser sets the date, meet time, end time and details (parking, rules, what to bring).
   Everyone sees it live, and people who join a cruise with details set land on it first. Times are shown
   as entered (local time), so they suit a cruise where everyone is in the same area.

@@ -116,7 +116,7 @@ function cleanInfo(b) {
   };
 }
 const publicState = c => ({ code: c.code, name: c.name, points: c.points, paths: c.paths, steps: c.steps || [], info: c.info || emptyInfo() });
-const carsList = c => [...c.cars.values()].map(({ id, name, color, lat, lng, hd, sp, t }) => ({ id, name, color, lat, lng, hd, sp, t }));
+const carsList = c => [...c.cars.values()].map(({ id, name, color, car, lat, lng, hd, sp, t }) => ({ id, name, color, car, lat, lng, hd, sp, t }));
 const photosMeta = c => c.photos.map(({ id, by, name, t, lat, lng }) => ({ id, by, name, t, lat, lng }));
 function decodeJpeg(dataUrl, max) {
   const m = /^data:image\/jpeg;base64,([A-Za-z0-9+\/=]+)$/.exec(typeof dataUrl === 'string' ? dataUrl : '');
@@ -141,11 +141,12 @@ async function api(req, res, url) {
   const p = url.pathname;
 
   if (p === '/api/cruises' && req.method === 'POST') {
-    const b = await readBody(req);
+    const b = await readBody(req, 3_000_000);
     const code = genCode();
+    const pts = cleanPoints(b.points);   // optional: start from a saved route
     const c = {
       code, name: str(b.name, 40) || 'Sunday cruise', adminKey: crypto.randomBytes(16).toString('hex'),
-      points: [], paths: [], steps: [], updated: Date.now(), cars: new Map(), clients: new Set(), carsDirty: false, changed: new Set(), metaDirty: new Set(), gone: [],
+      points: pts, paths: cleanPaths(b.paths, pts.length), steps: cleanSteps(b.steps, pts.length), updated: Date.now(), cars: new Map(), clients: new Set(), carsDirty: false, changed: new Set(), metaDirty: new Set(), gone: [],
       photos: [], photoBytes: 0, info: emptyInfo()
     };
     cruises.set(code, c); persistDirty = true;
@@ -177,10 +178,10 @@ async function api(req, res, url) {
     if (!id) return send(res, 400, { error: 'id required' });
     const lat = num(b.lat), lng = num(b.lng);
     const ok = lat != null && lng != null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
-    const name = str(b.name, 20) || 'Driver', color = /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : '#475569';
+    const name = str(b.name, 20) || 'Driver', color = /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : '#475569', carName = str(b.car, 40);
     const prev = c.cars.get(id);
-    if (!prev || prev.name !== name || prev.color !== color) c.metaDirty.add(id);
-    c.cars.set(id, { id, name, color, lat: ok ? lat : null, lng: ok ? lng : null, hd: num(b.hd), sp: num(b.sp), t: Date.now() });
+    if (!prev || prev.name !== name || prev.color !== color || prev.car !== carName) c.metaDirty.add(id);
+    c.cars.set(id, { id, name, color, car: carName, lat: ok ? lat : null, lng: ok ? lng : null, hd: num(b.hd), sp: num(b.sp), t: Date.now() });
     c.changed.add(id); c.updated = Date.now();
     return send(res, 204, null);
   }
@@ -280,7 +281,7 @@ setInterval(() => {                       // push car positions once a second
       for (const id of c.changed) {
         const car = c.cars.get(id); if (!car) continue;
         u.push([id, car.lat == null ? null : +car.lat.toFixed(5), car.lng == null ? null : +car.lng.toFixed(5), car.hd == null ? null : Math.round(car.hd), car.sp == null ? null : +car.sp.toFixed(1)]);
-        if (c.metaDirty.has(id)) m[id] = [car.name, car.color];
+        if (c.metaDirty.has(id)) m[id] = [car.name, car.color, car.car || ''];
       }
       const msg = { u, m, g: c.gone };
       for (const r of c.clients) sse(r, 'cd', msg);
